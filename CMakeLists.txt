@@ -25,14 +25,21 @@ target_include_directories(MiniDNN INTERFACE
 target_link_libraries(MiniDNN INTERFACE Eigen)
 
 # ──────────────────────────────────────────────
+# OpenMP (optional – install with: brew install libomp)
+# ──────────────────────────────────────────────
+find_package(OpenMP)
+if(NOT OpenMP_CXX_FOUND)
+    message(WARNING "OpenMP not found – parallel pragmas will be disabled. Run: brew install libomp")
+endif()
+
+# ──────────────────────────────────────────────
 # Project sources
 # ──────────────────────────────────────────────
 set(PROJECT_SOURCES
     src/main.cpp
     src/data.cpp
-    src/dispatcher.cpp
-    src/model.cpp
-    src/optimizer.cpp
+    src/worker.cpp
+    src/monitor.cpp
 )
 
 add_executable(mini_project ${PROJECT_SOURCES})
@@ -42,10 +49,11 @@ target_include_directories(mini_project PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-# Link third-party INTERFACE libraries
+# Link third-party INTERFACE libraries + OpenMP if available
 target_link_libraries(mini_project PRIVATE
     Eigen
     MiniDNN
+    $<$<BOOL:${OpenMP_CXX_FOUND}>:OpenMP::OpenMP_CXX>
 )
 
 # Optional: enable warnings
