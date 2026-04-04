@@ -17,6 +17,8 @@ void Worker::run_async(
     const Config& config,
     Monitor& monitor) 
 {
+    (void)thread_id; // Explicitly suppress unused parameter warnings
+    
     // 1. Private isolated network
     MiniDNNModel local_model(config);
 
@@ -82,7 +84,7 @@ void Worker::run_sync(
         #pragma omp barrier
         #endif
 
-        // 2. Sync local model with master model
+        // 2. Sync local model with master model weights
         local_model.set_weights(w_global);
 
         // Load atomic batch size to ensure each thread gets different slices

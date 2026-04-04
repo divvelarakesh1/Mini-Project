@@ -15,13 +15,20 @@
  */
 class Dispatcher {
 public:
+    Dispatcher() : counter_(0) {}
+
     // Returns {can_start, captured_step_index}
     std::tuple<bool, int> try_start_step() {
+        int idx = counter_.fetch_add(1, std::memory_order_relaxed);
+        // Simple gate: always allow
+        return {true, idx};
     }
 
     // Returns true if caller should apply the gradient update
     bool finish_step(int /*step_index*/) {
+        return true;
     }
 
 private:
+    std::atomic<int> counter_;
 };
