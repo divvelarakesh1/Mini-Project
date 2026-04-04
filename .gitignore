@@ -1,0 +1,52 @@
+# ──────────────────────────────
+# Build output
+# ──────────────────────────────
+build/
+out/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+Makefile
+cmake_install.cmake
+install_manifest.txt
+CTestTestfile.cmake
+*.cmake
+!CMakeLists.txt
+
+# ──────────────────────────────
+# Compiled binaries & objects
+# ──────────────────────────────
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+mini_project
+
+# ──────────────────────────────
+# Third-party libraries
+# (cloned locally, not committed)
+# ──────────────────────────────
+third-party/eigen/
+third-party/MiniDNN/
+
+# ──────────────────────────────
+# IDE / Editor files
+# ──────────────────────────────
+.vscode/
+.idea/
+*.code-workspace
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ──────────────────────────────
+# Clangd / compile commands
+# ──────────────────────────────
+compile_commands.json
+.cache/
