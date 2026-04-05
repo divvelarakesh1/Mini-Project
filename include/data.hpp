@@ -42,19 +42,10 @@ public:
     void load_cifar10(const std::string& dir);
 
     /**
-     * Load the CIFAR-10 test set.
-     * @param dir  Directory containing test_batch.bin
+     * Load the MNIST dataset.
+     * @param dir  Directory containing train-images-idx3-ubyte and train-labels-idx1-ubyte
      */
-    void load_cifar10_test(const std::string& dir);
-
-
-
-    /**
-     * Load the MNIST dataset (train or test).
-     * @param images_path  Path to the images binary file (e.g. train-images-idx3-ubyte)
-     * @param labels_path  Path to the labels binary file (e.g. train-labels-idx1-ubyte)
-     */
-    void load_mnist(const std::string& images_path, const std::string& labels_path);
+    void load_mnist(const std::string& dir);
 
     // -----------------------------------------------------------------------
     // Batch access – safe to call concurrently from multiple threads.

@@ -10,40 +10,68 @@ using ParameterList = std::vector<std::vector<double>>;
  * MiniDNNModel — thin wrapper around a MiniDNN network.
  *
  * Exposes the three operations used by Worker:
- *   set_weights()       — load global weights into the local network
- *   get_weights()       — read current weights out of the local network
- *   compute_gradients() — run a forward+backward pass on a mini-batch, returning {gradients, loss}
+ * set_weights()       — load global weights into the local network
+ * get_weights()       — read current weights out of the local network
+ * compute_gradients() — run a forward+backward pass on a mini-batch, returning {gradients, loss}
  */
 class MiniDNNModel {
 public:
     MiniDNNModel(const Config& config) {
         if (config.dataset == DatasetType::CIFAR) {
-            // Layer 1: Conv, input 32x32x3 (CIFAR), 16 output channels, 5x5 filter
-            MiniDNN::Layer* layer1 = new MiniDNN::Convolutional<MiniDNN::ReLU>(32, 32, 3, 16, 5, 5);
-            // Layer 2: Max pooling, input 28x28x16, pooling window 2x2
-            MiniDNN::Layer* layer2 = new MiniDNN::MaxPooling<MiniDNN::ReLU>(28, 28, 16, 2, 2);
-            // Layer 3: FCN, input 14x14x16 = 3136, output 10 (classes)
-            MiniDNN::Layer* layer3 = new MiniDNN::FullyConnected<MiniDNN::Identity>(14 * 14 * 16, 10);
+            // ---------------------------------------------------------
+            // CIFAR-10 ARCHITECTURE (Mini-VGG Style)
+            // Input: 32x32x3
+            // ---------------------------------------------------------
+            // Block 1: Conv -> Pool
+            // Conv 1: 3x3 filter, 16 channels. Output -> 30x30x16
+            MiniDNN::Layer* conv1 = new MiniDNN::Convolutional<MiniDNN::ReLU>(32, 32, 3, 16, 3, 3);
+            // Pool 1: 2x2 window. Output -> 15x15x16
+            MiniDNN::Layer* pool1 = new MiniDNN::MaxPooling<MiniDNN::Identity>(30, 30, 16, 2, 2);
             
-            net_.add_layer(layer1);
-            net_.add_layer(layer2);
-            net_.add_layer(layer3);
+            // Block 2: Conv -> Pool
+            // Conv 2: 3x3 filter, 32 channels. Output -> 13x13x32
+            MiniDNN::Layer* conv2 = new MiniDNN::Convolutional<MiniDNN::ReLU>(15, 15, 16, 32, 3, 3);
+            // Pool 2: 2x2 window. Output -> 6x6x32
+            MiniDNN::Layer* pool2 = new MiniDNN::MaxPooling<MiniDNN::Identity>(13, 13, 32, 2, 2);
+            
+            // Block 3: Fully Connected Classifier
+            // FC 1: Flattened 6*6*32 (1152) -> 128 hidden nodes (ReLU)
+            MiniDNN::Layer* fc1 = new MiniDNN::FullyConnected<MiniDNN::ReLU>(6 * 6 * 32, 128);
+            // FC 2: 128 hidden nodes -> 10 output classes (Softmax)
+            MiniDNN::Layer* fc2 = new MiniDNN::FullyConnected<MiniDNN::Softmax>(128, 10);
+            
+            net_.add_layer(conv1);
+            net_.add_layer(pool1);
+            net_.add_layer(conv2);
+            net_.add_layer(pool2);
+            net_.add_layer(fc1);
+            net_.add_layer(fc2);
+            
         } else if (config.dataset == DatasetType::MNIST) {
-            // Layer 1: Conv, input 28x28x1 (MNIST), 3 output channels, 5x5 filter
-            MiniDNN::Layer* layer1 = new MiniDNN::Convolutional<MiniDNN::ReLU>(28, 28, 1, 3, 5, 5);
-            // Layer 2: Max pooling, input 24x24x3, pooling window 2x2
-            MiniDNN::Layer* layer2 = new MiniDNN::MaxPooling<MiniDNN::ReLU>(24, 24, 3, 2, 2);
-            // Layer 3: FCN, input 12x12x3 = 432, output 10 (classes)
-            MiniDNN::Layer* layer3 = new MiniDNN::FullyConnected<MiniDNN::Identity>(12 * 12 * 3, 10);
+            // ---------------------------------------------------------
+            // MNIST ARCHITECTURE (Standard LeNet Style)
+            // Input: 28x28x1
+            // ---------------------------------------------------------
+            // Conv 1: 5x5 filter, 8 channels. Output -> 24x24x8
+            MiniDNN::Layer* conv1 = new MiniDNN::Convolutional<MiniDNN::ReLU>(28, 28, 1, 8, 5, 5);
+            // Pool 1: 2x2 window. Output -> 12x12x8
+            MiniDNN::Layer* pool1 = new MiniDNN::MaxPooling<MiniDNN::Identity>(24, 24, 8, 2, 2);
             
-            net_.add_layer(layer1);
-            net_.add_layer(layer2);
-            net_.add_layer(layer3);
+            // FC 1: Flattened 12*12*8 (1152) -> 64 hidden nodes (ReLU)
+            MiniDNN::Layer* fc1 = new MiniDNN::FullyConnected<MiniDNN::ReLU>(12 * 12 * 8, 64);
+            // FC 2: 64 hidden nodes -> 10 output classes (Softmax)
+            MiniDNN::Layer* fc2 = new MiniDNN::FullyConnected<MiniDNN::Softmax>(64, 10);
+            
+            net_.add_layer(conv1);
+            net_.add_layer(pool1);
+            net_.add_layer(fc1);
+            net_.add_layer(fc2);
         }
         
+        // Final Output Loss Calculation
         net_.set_output(new MiniDNN::MultiClassEntropy());
         
-        // Initialize weights
+        // Initialize weights (mean 0, variance 0.01, random seed)
         net_.init(0, 0.01, 123);
         
         // Grab initial weights

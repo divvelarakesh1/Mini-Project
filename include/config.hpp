@@ -19,10 +19,11 @@ enum class DatasetType {
  */
 struct Config {
     int total_steps = 1000;
-    double eta = 0.01;            // Learning rate
+    double eta = 0.05;            // Learning rate
     double lambda = 0.04;         // DC-ASGD penalty
     int batch_size = 64;          // Mini-batch size
-    bool use_dc_asgd = true;      // Enable Delay Compensation (DC-ASGD)
+    bool use_dc_asgd = false;      // Enable Delay Compensation (DC-ASGD)
+    bool use_sync_mode = true;   // Enable Synchronous Mode
     int num_threads = 4;          // Number of threads
     int log_interval = 100;       // Interval at which the Monitor prints aggregated stats
     DatasetType dataset = DatasetType::CIFAR; // Target dataset

@@ -1,6 +1,7 @@
 #include <iostream>
 #include <string>
 #include <cstdlib>
+#include <algorithm>
 
 #include <thread>
 
@@ -42,10 +43,10 @@ int main(int argc, char** argv) {
     try {
         if (config.dataset == DatasetType::MNIST) {
             std::cout << "[Main] Target dataset is MNIST. Loading stream formats...\n";
-            loader.load_mnist("data/mnist/train-images-idx3-ubyte", "data/mnist/train-labels-idx1-ubyte");
+            loader.load_mnist("../data/mnist");
         } else {
             std::cout << "[Main] Target dataset is CIFAR-10. Loading stream formats...\n";
-            loader.load_cifar10("data/cifar-10/cifar-10-batches-bin");
+            loader.load_cifar10("../data/cifar-10");
         }
     } catch (const std::exception& e) {
         std::cerr << "\n[CRITICAL ERROR] Failed to load datasets: " << e.what() << "\n";
@@ -56,6 +57,14 @@ int main(int argc, char** argv) {
     // 2. Global Scoped Modules
     MiniDNNModel global_model(config);
     ParameterList w_global = global_model.get_weights();
+    
+    ParameterList g_global_accum;
+    if (config.use_sync_mode) {
+        g_global_accum = global_model.get_weights();
+        for (auto& vec : g_global_accum) {
+            std::fill(vec.begin(), vec.end(), 0.0);
+        }
+    }
     
     Monitor monitor(config);
     Dispatcher dispatcher;
@@ -74,8 +83,12 @@ int main(int argc, char** argv) {
         thread_id = omp_get_thread_num();
 #endif
         
-        // Boot asynchronous logic per thread independently 
-        Worker::run_async(thread_id, w_global, loader, dispatcher, config, monitor);
+        if (config.use_sync_mode) {
+            Worker::run_sync(thread_id, w_global, g_global_accum, loader, config, monitor);
+        } else {
+            // Boot asynchronous logic per thread independently 
+            Worker::run_async(thread_id, w_global, loader, dispatcher, config, monitor);
+        }
     }
 
     std::cout << "=====================================\n";

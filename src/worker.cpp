@@ -1,5 +1,7 @@
 #include "worker.hpp"
 #include <Eigen/Core>
+#include <iostream>
+
 #ifdef _OPENMP
 #  include <omp.h>
 #endif
@@ -31,7 +33,7 @@ void Worker::run_async(
         // 3. Sync & Compute
         local_model.set_weights(w_global);
 
-        // Load actual mini-batch (batch size config.batch_size)
+        // Load actual mini-batch
         auto [batch_X, batch_Y] = loader.next_batch(config.batch_size);
 
         auto [g_local, batch_loss] = local_model.compute_gradients(batch_X, batch_Y);
@@ -64,7 +66,7 @@ void Worker::run_async(
 }
 
 // ==============================================================================
-// MODE 2: SYNCHRONOUS (Strict Thread Barriers)
+// MODE 2: SYNCHRONOUS (Strict Thread Barriers with Epoch Shuffling)
 // ==============================================================================
 void Worker::run_sync(
     int thread_id,
@@ -77,9 +79,34 @@ void Worker::run_sync(
     // 1. Private isolated network
     MiniDNNModel local_model(config);
 
+    // Calculate how many steps make up one full epoch
+    int steps_per_epoch = loader.num_samples() / config.batch_size;
+    if (steps_per_epoch <= 0) steps_per_epoch = 1; // Safety fallback
+
     for (int step = 0; step < config.total_steps; ++step) {
         
-        // BARRIER 1: Ensure all threads start the step at the exact same time
+        // ----------------------------------------------------------------------
+        // EPOCH BOUNDARY SHUFFLE LOGIC
+        // ----------------------------------------------------------------------
+        if (step > 0 && (step % steps_per_epoch == 0)) {
+            
+            // Barrier A: Ensure all threads have finished the previous step's math
+            #ifdef _OPENMP
+            #pragma omp barrier 
+            #endif
+
+            // Only ONE thread is allowed to touch the dataset while it shuffles
+            if (thread_id == 0) {
+                loader.shuffle(); 
+            }
+
+            // Barrier B: Stop threads from pulling the next batch until Thread 0 is done
+            #ifdef _OPENMP
+            #pragma omp barrier 
+            #endif
+        }
+
+        // BARRIER 1: Ensure all threads start the batch fetch at the exact same time
         #ifdef _OPENMP
         #pragma omp barrier
         #endif
@@ -133,6 +160,8 @@ void Worker::run_sync(
         }
 
         // BARRIER 3: Stop threads from starting the next step until Thread 0 is done updating
+        #ifdef _OPENMP
         #pragma omp barrier
+        #endif
     }
 }

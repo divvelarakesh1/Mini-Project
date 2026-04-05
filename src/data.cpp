@@ -64,27 +64,6 @@ void DataLoader::load_cifar10(const std::string& dir)
               << ", classes=" << kCifar10Classes << "\n";
 }
 
-void DataLoader::load_cifar10_test(const std::string& dir)
-{
-    std::lock_guard<std::mutex> lock(mtx_);
-
-    num_features_ = kImageBytes;
-    num_classes_  = kCifar10Classes;
-
-    images_.resize(kImageBytes, kCifar10N);
-    labels_.reserve(kCifar10N);
-
-    load_cifar10_file(dir + "/test_batch.bin");
-
-    int n = static_cast<int>(labels_.size());
-    images_.conservativeResize(kImageBytes, n);
-
-    cursor_.store(0, std::memory_order_relaxed);
-    std::cout << "[DataLoader] CIFAR-10 test loaded: "
-              << n << " samples\n";
-}
-
-
 // ============================================================================
 // next_batch — thread-safe mini-batch fetch
 // ============================================================================
@@ -189,9 +168,14 @@ void DataLoader::load_cifar10_file(const std::string& path)
     while (f.read(reinterpret_cast<char*>(record.data()), kRecordBytes)) {
         labels_.push_back(record[0]);
 
-        // Normalise [0, 255] → [0, 1] and store as float64 column
-        for (int j = 0; j < kImageBytes; ++j)
-            images_(j, col) = record[1 + j] / 255.0;
+        // Reshape [0, 255] row-major -> [0, 1] col-major (as preferred by MiniDNN)
+        for (int c = 0; c < 3; ++c) {
+            for (int y = 0; y < 32; ++y) {
+                for (int x = 0; x < 32; ++x) {
+                    images_(c * 1024 + x * 32 + y, col) = record[1 + c * 1024 + y * 32 + x] / 255.0;
+                }
+            }
+        }
 
         ++col;
     }
@@ -212,9 +196,12 @@ static uint32_t reverseInt(uint32_t i) {
 // ============================================================================
 // Public: Load MNIST dataset
 // ============================================================================
-void DataLoader::load_mnist(const std::string& images_path, const std::string& labels_path)
+void DataLoader::load_mnist(const std::string& dir)
 {
     std::lock_guard<std::mutex> lock(mtx_);
+
+    std::string images_path = dir + "/train-images-idx3-ubyte";
+    std::string labels_path = dir + "/train-labels-idx1-ubyte";
 
     std::ifstream fImages(images_path, std::ios::binary);
     std::ifstream fLabels(labels_path, std::ios::binary);
@@ -274,8 +261,11 @@ void DataLoader::load_mnist(const std::string& images_path, const std::string& l
         if (!fImages.read(reinterpret_cast<char*>(img_buffer.data()), img_size)) {
             throw std::runtime_error("[DataLoader] Failed to read all MNIST images.");
         }
-        for (int j = 0; j < img_size; ++j) {
-            images_(j, i) = img_buffer[j] / 255.0;
+        // Reshape [0, 255] row-major -> [0, 1] col-major (as preferred by MiniDNN)
+        for (uint32_t y = 0; y < rows; ++y) {
+            for (uint32_t x = 0; x < cols; ++x) {
+                images_(x * rows + y, i) = img_buffer[y * cols + x] / 255.0;
+            }
         }
     }
 
