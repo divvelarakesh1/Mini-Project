@@ -1,10 +1,7 @@
 /**
  * data.cpp  —  DataLoader implementation
  *
- * Thread-safe CIFAR-10 / CIFAR-100 mini-batch provider.
- *
- * CIFAR binary formats:
- *  CIFAR-10:  [1-byte label | 3072-byte image] × N  (N = 10 000 per file)
+ * Thread-safe CIFAR-10 / MNIST dataset provider for concurrent learning models.
  */
 
 #include "data.hpp"
@@ -19,16 +16,40 @@
 #include <stdexcept>
 
 // ============================================================================
-// Constants
+// Constants & Utility functions
 // ============================================================================
 
-static constexpr int kImageBytes   = 3072;  // 32 * 32 * 3
-static constexpr int kCifar10N    = 10000;  // samples per training file
-static constexpr int kCifar10Files = 5;     // data_batch_1 … data_batch_5
-static constexpr int kCifar10Classes  = 10;
+namespace {
+    // CIFAR-10 Constants
+    constexpr int kCifarImageBytes    = 3072;  // 32 * 32 * 3
+    constexpr int kCifarRecordBytes   = 1 + kCifarImageBytes; // 1 label byte + pixel data
+    constexpr int kCifar10Samples     = 10000; // samples per training file
+    constexpr int kCifar10FilesCount  = 5;     // data_batch_1 … data_batch_5
+    constexpr int kCifar10ClassesCount = 10;
+
+    // MNIST Constants
+    constexpr uint32_t kMnistImageMagic = 2051; // 0x0803
+    constexpr uint32_t kMnistLabelMagic = 2049; // 0x0801
+    constexpr int kMnistExpectedRows    = 28;
+    constexpr int kMnistExpectedCols    = 28;
+    constexpr int kMnistClassesCount    = 10;
+
+    /**
+     * @brief Reverses byte order for unsigned 32-bit integers.
+     * MNIST files store dataset statistics natively using the Big Endian format. 
+     * However, standard Intel/ARM processors are Little Endian. This utility transforms 
+     * parsed header numbers directly into native little-endian equivalents.
+     */
+    uint32_t swap_endianness_32(uint32_t i) {
+        return ((i & 0x000000FF) << 24) |
+               ((i & 0x0000FF00) <<  8) |
+               ((i & 0x00FF0000) >>  8) |
+               ((i & 0xFF000000) >> 24);
+    }
+}
 
 // ============================================================================
-// ctor
+// Constructor
 // ============================================================================
 
 DataLoader::DataLoader()
@@ -42,92 +63,78 @@ void DataLoader::load_cifar10(const std::string& dir)
 {
     std::lock_guard<std::mutex> lock(mtx_);
 
-    num_features_ = kImageBytes;
-    num_classes_  = kCifar10Classes;
+    num_features_ = kCifarImageBytes;
+    num_classes_  = kCifar10ClassesCount;
 
-    // Pre-allocate: 50 000 columns
-    images_.resize(kImageBytes, kCifar10N * kCifar10Files);
-    labels_.reserve(kCifar10N * kCifar10Files);
+    // Pre-allocate space for optimal memory allocation
+    images_.resize(kCifarImageBytes, kCifar10Samples * kCifar10FilesCount);
+    labels_.reserve(kCifar10Samples * kCifar10FilesCount);
 
-    for (int i = 1; i <= kCifar10Files; ++i) {
+    for (int i = 1; i <= kCifar10FilesCount; ++i) {
         std::string path = dir + "/data_batch_" + std::to_string(i) + ".bin";
         load_cifar10_file(path);
     }
 
-    // Trim to actual loaded size (in case any file was short)
+    // Shrink matrix bounds closely to actual populated elements
     int n = static_cast<int>(labels_.size());
-    images_.conservativeResize(kImageBytes, n);
+    images_.conservativeResize(kCifarImageBytes, n);
 
     cursor_.store(0, std::memory_order_relaxed);
+    
     std::cout << "[DataLoader] CIFAR-10 train loaded: "
-              << n << " samples, features=" << kImageBytes
-              << ", classes=" << kCifar10Classes << "\n";
+              << n << " samples, features=" << num_features_
+              << ", classes=" << num_classes_ << "\n";
 }
 
 // ============================================================================
-// next_batch — thread-safe mini-batch fetch
+// Thread-Safe Mini-Batch Logic
 // ============================================================================
 
 std::pair<Eigen::MatrixXd, Eigen::MatrixXd>
 DataLoader::next_batch(int batch_size)
 {
-    const int N = static_cast<int>(labels_.size());
+    const size_t N = labels_.size();
     assert(N > 0 && "DataLoader: dataset not loaded yet");
-    assert(batch_size > 0);
+    assert(batch_size > 0 && "DataLoader: Requested an empty batch!");
 
     // -----------------------------------------------------------------------
-    // 1.  Atomically claim [start, end) in the shuffled sample index space.
-    //     We use a simple fetch_add; the claimed window wraps around mod N
-    //     so callers always receive exactly batch_size columns.
+    // Atomically claim the slice boundaries [start, start + batch_size).
+    // The underlying atomic size_t provides near infinite sequence ranges. 
+    // This allows fast increment operations devoid of compare-exchange retries.
+    // Wrap around boundaries dynamically mapped during offset mapping.
     // -----------------------------------------------------------------------
-    int start = cursor_.fetch_add(batch_size, std::memory_order_relaxed);
+    size_t start = cursor_.fetch_add(static_cast<size_t>(batch_size), std::memory_order_relaxed);
 
-    // If this thread wrapped past N, reset the cursor.
-    // Multiple threads may race here; that's fine — only one write "wins"
-    // and the actual indices below are taken mod N so nothing out-of-bounds.
-    if (start >= N) {
-        // Soft-reset: many threads may CAS, only one succeeds — doesn't matter
-        int expected = start + batch_size;
-        int desired  = batch_size;
-        cursor_.compare_exchange_weak(expected, desired,
-                                      std::memory_order_relaxed);
-        start = start % N;
-    }
-
-    // -----------------------------------------------------------------------
-    // 2.  Gather columns (wrap-around safe)
-    // -----------------------------------------------------------------------
     Eigen::MatrixXd batch_X(num_features_, batch_size);
     Eigen::MatrixXd batch_Y = Eigen::MatrixXd::Zero(num_classes_, batch_size);
 
     for (int i = 0; i < batch_size; ++i) {
-        int idx = (start + i) % N;
+        size_t idx = (start + i) % N;
 
         batch_X.col(i)               = images_.col(idx);
-        batch_Y(labels_[idx], i)     = 1.0;  // one-hot
+        batch_Y(labels_[idx], i)     = 1.0;  // one-hot encode target class
     }
 
     return {batch_X, batch_Y};
 }
 
 // ============================================================================
-// shuffle  (hold mutex — do not call while threads are running)
+// Dataset Shuffle Routine
 // ============================================================================
 
 void DataLoader::shuffle()
 {
     std::lock_guard<std::mutex> lock(mtx_);
     const int N = static_cast<int>(labels_.size());
-    assert(N > 0);
+    if (N == 0) return;
 
-    // Build a permutation and apply it in-place
+    // Apply permutations directly inplace using standardized sequence mappings
     std::vector<int> perm(N);
     std::iota(perm.begin(), perm.end(), 0);
     std::mt19937 rng{std::random_device{}()};
     std::shuffle(perm.begin(), perm.end(), rng);
 
-    // Apply permutation to images_ and labels_
-    Eigen::MatrixXd   tmp_images(num_features_, N);
+    Eigen::MatrixXd      tmp_images(num_features_, N);
     std::vector<uint8_t> tmp_labels(N);
 
     for (int i = 0; i < N; ++i) {
@@ -142,7 +149,7 @@ void DataLoader::shuffle()
 }
 
 // ============================================================================
-// Private: load one CIFAR-10 binary file (10 000 records)
+// Private: CIFAR-10 Parser Helper
 // ============================================================================
 
 void DataLoader::load_cifar10_file(const std::string& path)
@@ -151,51 +158,45 @@ void DataLoader::load_cifar10_file(const std::string& path)
     if (!f.is_open())
         throw std::runtime_error("[DataLoader] Cannot open: " + path);
         
-    // Robustness: ensure exact strict bounds for CIFAR files
-    static constexpr int kRecordBytes = 1 + kImageBytes;
+    // Assert boundary specifications match tightly
     auto size = f.tellg();
-    if (size != static_cast<std::streampos>(kCifar10N * kRecordBytes)) {
+    if (size != static_cast<std::streampos>(kCifar10Samples * kCifarRecordBytes)) {
         throw std::runtime_error("[DataLoader] Invalid CIFAR-10 file sizes at: " + path);
     }
     
-    // Return to start
     f.seekg(0, std::ios::beg);
 
-    std::vector<uint8_t> record(kRecordBytes);
+    // Read full slice bulk directly into managed memory vector buffer
+    std::vector<uint8_t> buffer(size);
+    if (!f.read(reinterpret_cast<char*>(buffer.data()), size)) {
+        throw std::runtime_error("[DataLoader] Read constraint failure in file: " + path);
+    }
 
-    int col = static_cast<int>(labels_.size());  // append after any prior data
+    int col = static_cast<int>(labels_.size());
+    size_t offset = 0;
 
-    while (f.read(reinterpret_cast<char*>(record.data()), kRecordBytes)) {
-        labels_.push_back(record[0]);
+    for (int i = 0; i < kCifar10Samples; ++i) {
+        labels_.push_back(buffer[offset]);
 
-        // Reshape [0, 255] row-major -> [0, 1] col-major (as preferred by MiniDNN)
+        // CIFAR encodes red mapping initially, then green blocks followed by blue arrays. 
+        // We unpack sequentially into dense column-major target blocks scaling to [0.0, 1.0].
         for (int c = 0; c < 3; ++c) {
             for (int y = 0; y < 32; ++y) {
                 for (int x = 0; x < 32; ++x) {
-                    images_(c * 1024 + x * 32 + y, col) = record[1 + c * 1024 + y * 32 + x] / 255.0;
+                    images_(c * 1024 + x * 32 + y, col) = buffer[offset + 1 + c * 1024 + y * 32 + x] / 255.0;
                 }
             }
         }
 
+        offset += kCifarRecordBytes;
         ++col;
     }
 }
 
 // ============================================================================
-// Private: Endianness swapping for MNIST format
+// Public: MNIST Binary Parser Driver
 // ============================================================================
-static uint32_t reverseInt(uint32_t i) {
-    unsigned char c1, c2, c3, c4;
-    c1 = i & 255;
-    c2 = (i >> 8) & 255;
-    c3 = (i >> 16) & 255;
-    c4 = (i >> 24) & 255;
-    return ((uint32_t)c1 << 24) + ((uint32_t)c2 << 16) + ((uint32_t)c3 << 8) + c4;
-}
 
-// ============================================================================
-// Public: Load MNIST dataset
-// ============================================================================
 void DataLoader::load_mnist(const std::string& dir)
 {
     std::lock_guard<std::mutex> lock(mtx_);
@@ -209,18 +210,19 @@ void DataLoader::load_mnist(const std::string& dir)
     if (!fImages.is_open()) throw std::runtime_error("[DataLoader] Cannot open MNIST images: " + images_path);
     if (!fLabels.is_open()) throw std::runtime_error("[DataLoader] Cannot open MNIST labels: " + labels_path);
 
-    // Read magic numbers
+    // ========================================================================
+    // Header Identification Check 
+    // ========================================================================
     uint32_t magic_img = 0, magic_lbl = 0;
     fImages.read(reinterpret_cast<char*>(&magic_img), 4);
     fLabels.read(reinterpret_cast<char*>(&magic_lbl), 4);
 
-    magic_img = reverseInt(magic_img);
-    magic_lbl = reverseInt(magic_lbl);
+    magic_img = swap_endianness_32(magic_img);
+    magic_lbl = swap_endianness_32(magic_lbl);
 
-    if (magic_img != 2051) throw std::runtime_error("[DataLoader] Invalid MNIST image file magic number.");
-    if (magic_lbl != 2049) throw std::runtime_error("[DataLoader] Invalid MNIST label file magic number.");
+    if (magic_img != kMnistImageMagic) throw std::runtime_error("[DataLoader] Invalid MNIST image magic byte format.");
+    if (magic_lbl != kMnistLabelMagic) throw std::runtime_error("[DataLoader] Invalid MNIST label magic byte format.");
 
-    // Read headers
     uint32_t num_images = 0, num_labels = 0;
     uint32_t rows = 0, cols = 0;
 
@@ -229,39 +231,42 @@ void DataLoader::load_mnist(const std::string& dir)
     fImages.read(reinterpret_cast<char*>(&rows), 4);
     fImages.read(reinterpret_cast<char*>(&cols), 4);
 
-    num_images = reverseInt(num_images);
-    num_labels = reverseInt(num_labels);
-    rows = reverseInt(rows);
-    cols = reverseInt(cols);
+    num_images = swap_endianness_32(num_images);
+    num_labels = swap_endianness_32(num_labels);
+    rows = swap_endianness_32(rows);
+    cols = swap_endianness_32(cols);
 
-    if (num_images != num_labels) throw std::runtime_error("[DataLoader] Mismatch between MNIST images and labels count.");
+    if (num_images != num_labels) throw std::runtime_error("[DataLoader] Divergent sequence dimensions between labels and metrics.");
+    if (rows != kMnistExpectedRows || cols != kMnistExpectedCols) throw std::runtime_error("[DataLoader] Data geometry validation failed expected sizes.");
 
-    // Robustness: ensure sizes matches our expectations.
-    if (rows != 28 || cols != 28) throw std::runtime_error("[DataLoader] Expected 28x28 MNIST images.");
-
-    num_features_ = rows * cols; // 784
-    num_classes_  = 10;
+    num_features_ = rows * cols; // Should equal 784 linearly mapped
+    num_classes_  = kMnistClassesCount;
 
     images_.resize(num_features_, num_images);
     labels_.reserve(num_labels);
 
-    // Read labels
+    // ========================================================================
+    // Dense Matrix Class Decoding
+    // ========================================================================
     std::vector<uint8_t> lbl_buffer(num_labels);
     if (!fLabels.read(reinterpret_cast<char*>(lbl_buffer.data()), num_labels)) {
-        throw std::runtime_error("[DataLoader] Failed to read all MNIST labels.");
+        throw std::runtime_error("[DataLoader] Exhaustive dataset extraction interrupted.");
     }
     for (uint32_t i = 0; i < num_labels; ++i) {
         labels_.push_back(lbl_buffer[i]);
     }
 
-    // Read images
+    // ========================================================================
+    // Image Layout Rendering Routine
+    // ========================================================================
     const int img_size = num_features_;
     std::vector<uint8_t> img_buffer(img_size);
     for (uint32_t i = 0; i < num_images; ++i) {
         if (!fImages.read(reinterpret_cast<char*>(img_buffer.data()), img_size)) {
-            throw std::runtime_error("[DataLoader] Failed to read all MNIST images.");
+            throw std::runtime_error("[DataLoader] Exhaustive dataset parsing interrupted.");
         }
-        // Reshape [0, 255] row-major -> [0, 1] col-major (as preferred by MiniDNN)
+        
+        // Iterating uniformly matching hardware optimized dense sequences over matrices natively.
         for (uint32_t y = 0; y < rows; ++y) {
             for (uint32_t x = 0; x < cols; ++x) {
                 images_(x * rows + y, i) = img_buffer[y * cols + x] / 255.0;
@@ -270,7 +275,8 @@ void DataLoader::load_mnist(const std::string& dir)
     }
 
     cursor_.store(0, std::memory_order_relaxed);
-    std::cout << "[DataLoader] MNIST loaded: "
+    
+    std::cout << "[DataLoader] MNIST testnet loaded: "
               << num_images << " samples, features=" << num_features_
               << ", classes=" << num_classes_ << "\n";
 }
