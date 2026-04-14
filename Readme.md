@@ -1,81 +1,218 @@
-# Mini-Project: Parallel Deep Learning Engine (Hogwild! & Sync SGD)
+# Parallel Deep Learning Training Engine
 
-This project provides a highly customizable, multithreaded backend built from scratch in C++ to train **MiniDNN** deep learning models concurrently. It bypasses conventional frameworks to directly implement thread-safe interval asynchrony, Delay Compensated Asynchronous Stochastic Gradient Descent (DC-ASGD), and strict Synchronous Parallel training modes.
+A multithreaded deep learning training backend built from scratch in C++ using OpenMP. Trains convolutional neural networks on CIFAR-10 and MNIST datasets with support for multiple execution modes (Hogwild!, Synchronous Parallel, Sequential) and multiple optimizer algorithms (SGD with Momentum, Adam, RMSProp).
 
-## Architecture Pipeline
+## Architecture Overview
 
-The system wraps the lightweight, header-only `MiniDNN` tensor library and manually manages execution pipelines across OpenMP thread pools. The runtime flow is structured into three primary components:
+```
+┌────────────────────────────────────────────────────────┐
+│                      main.cpp                          │
+│         Load config.json → DataLoader → Engine         │
+└──────────────────────┬─────────────────────────────────┘
+                       │
+              ┌────────▼────────┐
+              │ TrainingEngine  │
+              │  Routes config  │
+              │  Spawns threads │
+              └──┬─────┬─────┬──┘
+                 │     │     │
+        ┌────────┘     │     └────────┐
+        ▼              ▼              ▼
+   ┌─────────┐   ┌──────────┐   ┌──────────┐
+   │ Worker  │   │  Worker  │   │  Worker  │
+   │ Thread 0│   │ Thread 1 │   │ Thread N │
+   └────┬────┘   └────┬─────┘   └────┬─────┘
+        │              │              │
+        └──────────┬───┘──────────────┘
+                   ▼
+          ┌────────────────┐
+          │ Global Weights │  (shared memory)
+          └────────────────┘
+                   │
+          ┌────────▼────────┐
+          │     Monitor     │
+          │  Epoch tracking │
+          │  Loss & Speed   │
+          └─────────────────┘
+```
 
-- **`TrainingEngine`**: The core graph manager. It initializes the threads, routes configurations, and binds the data loaders to the neural network processors.
-- **`Worker`**: Spawns multithreaded isolation models for the neural network. 
-  - *Async Mode (Hogwild!)*: Leverages lock-free local gradient updates and evaluates staleness via DC-ASGD (Delay-Compensated ASGD) penalties to ensure mathematical convergence during uncoordinated writes to global memory.
-  - *Sync Mode*: Strict barrier-governed synchronous parallel SGD loops over dynamic dataset chunks using centralized gradient accumulators.
-  - *Sequential Mode*: A standard, single-threaded stochastic gradient descent loop designed for benchmarking.
-- **`DataLoader`**: Atomically distributes disjoint dataset samples to the workers via thread-safe read locks. Completely eliminates CPU data-loading bottlenecks by natively caching the datasets into fast matrix abstractions in memory. 
+### Core Components
 
-## Datasets Supported
+| Component | File(s) | Purpose |
+|-----------|---------|---------|
+| **TrainingEngine** | `engine.hpp/cpp` | Central orchestrator. Initializes threads, routes execution modes, binds the data loader and monitor to workers. |
+| **Worker** | `worker.hpp/cpp` | The compute kernel. Each thread runs a Worker loop that pulls batches, computes gradients, and updates global weights. Three modes are supported (see below). |
+| **DataLoader** | `data.hpp/cpp` | Thread-safe dataset provider. Loads CIFAR-10/MNIST from binary files, normalizes pixels to `[0, 1]`, and distributes batches via atomic cursors. |
+| **Monitor** | `monitor.hpp/cpp` | Lock-free metrics aggregator. Tracks training progress by **epochs** (total images processed / dataset size), logs average loss and throughput every 0.1 epochs. |
+| **Optimizer** | `optimizer.hpp/cpp` | Polymorphic optimizer with factory pattern. Supports SGD+Momentum, Adam, and RMSProp. Each worker thread owns a local optimizer instance. |
+| **Dispatcher** | `dispatcher.hpp` | Atomic step gate for async mode. Controls per-step concurrency flow (currently a pass-through, extensible for custom scheduling). |
+| **MiniDNNModel** | `model.hpp` | Wraps the MiniDNN header-only library. Builds dataset-specific CNN architectures and provides forward/backward pass + gradient extraction. |
+| **Config** | `config.hpp/cpp` | Loads all hyperparameters from `config.json` at runtime. Falls back to safe defaults if file is missing. |
 
-By simply toggling `"dataset"` in `config.json`, the system automatically provisions different computational graphs matching specific data formats:
-* **MNIST**: Evaluates `28x28x1` (784 features) grayscale digits. Natively swaps Endian architectures on-the-fly for modern little-endian CPUs.
-* **CIFAR-10**: Evaluates `32x32x3` (3072 features) standard color imagery.
+## Execution Modes
 
-## Setup Instructions
+### 1. Asynchronous — Hogwild! (`ASYNC_HOGWILD`)
+Each thread independently reads global weights, computes a local forward/backward pass, and writes gradients back to shared memory **without locks**. Supports optional **DC-ASGD** (Delay-Compensated ASGD) penalty to stabilize convergence under high staleness.
 
-### 1. Requirements
-- C++17 compliant compiler (GCC/Clang)
-- `CMake` (>= 3.16)
-- `OpenMP` (Optional but mandated for threading features. macOS: `brew install libomp`)
-- *Third-Party libs*: `Eigen` and `MiniDNN` are included natively entirely as headers.
+### 2. Synchronous Parallel (`SYNC_PARALLEL`)
+All threads compute gradients in lock-step using OpenMP barriers. Gradients are accumulated into a shared buffer, averaged by thread 0, and applied as a single update per step. Dataset is shuffled at epoch boundaries.
 
-### 2. Download Datasets
-You do **not** need to manually download or parse data formats. Execute the included script from the project root to fetch canonical `CIFAR-10` and `MNIST` binary datasets into the `/data` folder:
+### 3. Sequential (`SEQUENTIAL`)
+Standard single-threaded SGD loop. Useful as a baseline for benchmarking parallel speedup and validating convergence behavior.
+
+## Optimizer Algorithms
+
+| Algorithm | Config Value | Key Params | Typical `eta` |
+|-----------|-------------|------------|---------------|
+| **SGD + Momentum** | `"SGD"` | `eta`, `momentum` | `0.1` |
+| **Adam** | `"ADAM"` | `eta`, `beta1`, `beta2`, `epsilon` | `0.001` |
+| **RMSProp** | `"RMSPROP"` | `eta`, `beta2`, `epsilon` | `0.001` |
+
+> **Important:** Adam and RMSProp require a much smaller learning rate (~0.001) than SGD (~0.1). Using `eta: 0.1` with Adam will cause `nan` loss due to weight explosion.
+
+## Neural Network Architectures
+
+### CIFAR-10 (32×32×3 color images)
+```
+Conv(3×3, 3→16) → ReLU → MaxPool(2×2)
+Conv(3×3, 16→32) → ReLU → MaxPool(2×2)
+FC(1152→128) → ReLU
+FC(128→10) → Softmax
+```
+
+### MNIST (28×28×1 grayscale digits)
+```
+Conv(5×5, 1→8) → ReLU → MaxPool(2×2)
+FC(1152→64) → ReLU
+FC(64→10) → Softmax
+```
+
+Both use **Multi-Class Cross-Entropy** loss.
+
+## Datasets
+
+| Dataset | Samples | Features | Classes |
+|---------|---------|----------|---------|
+| **CIFAR-10** | 50,000 | 3,072 (32×32×3) | 10 |
+| **MNIST** | 60,000 | 784 (28×28×1) | 10 |
+
+Toggle between them by setting `"dataset"` to `"CIFAR"` or `"MNIST"` in `config.json`.
+
+## Setup
+
+### Prerequisites
+- C++17 compiler (GCC or Clang)
+- CMake ≥ 3.16
+- OpenMP (macOS: `brew install libomp`)
+- Third-party libraries (Eigen, MiniDNN, nlohmann/json) are bundled in `third-party/`
+
+### 1. Download Datasets
 ```bash
 ./scripts/get_datasets.sh
 ```
+This fetches CIFAR-10 and MNIST binary files into the `data/` directory.
 
-### 3. Build Project
-Generate and execute the build via CMake:
+### 2. Build
 ```bash
 mkdir -p build && cd build
 cmake ..
-make -j4
+make -j$(nproc)    # Linux
+make -j$(sysctl -n hw.ncpu)  # macOS
 ```
 
-## Configuration Management
+### 3. Run
+```bash
+cd build
+./mini_project
+```
+The engine reads `config.json` from the project root (or parent directory if run from `build/`).
 
-Configuration settings are now managed via `config.json` in the project root. This allows for runtime adjustments without requiring recompilation. If the file is missing or invalid, the system automatically falls back to safe default parameters.
+## Configuration
+
+All hyperparameters are set in `config.json` — no recompilation needed.
 
 ### Example `config.json`
 ```json
 {
-  "total_steps": 1000,
-  "eta": 0.1,
+  "total_steps": 10000,
+  "eta": 0.001,
   "momentum": 0.9,
+  "lambda": 0.04,
+  "batch_size": 128,
+  "exec_mode": "ASYNC_HOGWILD",
+  "opt_algo": "ADAM",
+  "opt_mode": "STANDARD_SGD",
   "beta1": 0.9,
   "beta2": 0.999,
   "epsilon": 1e-8,
-  "lambda": 0.04,
-  "batch_size": 64,
-  "exec_mode": "ASYNC_HOGWILD",
-  "opt_algo": "SGD",
-  "opt_mode": "STANDARD_SGD",
   "num_threads": 4,
-  "log_interval": 100,
   "dataset": "CIFAR"
 }
 ```
 
-### Parameter Breakdown
-*   **`total_steps`**: Total number of training iterations.
-*   **`eta`**: The learning rate for gradient updates.
-*   **`momentum`**: Momentum coefficient for the optimizer (Standard SGD).
-*   **`beta1` / `beta2` / `epsilon`**: Hyperparameters specifically used by the Adam and RMSProp optimizers.
-*   **`lambda`**: Penalty parameter specifically for DC-ASGD delay compensation.
-*   **`batch_size`**: Number of samples processed per batch.
-*   **`exec_mode`**: Parallelism strategy (`SEQUENTIAL`, `SYNC_PARALLEL`, or `ASYNC_HOGWILD`).
-*   **`opt_algo`**: The structural optimization algorithm to use (`SGD`, `ADAM`, or `RMSPROP`).
-*   **`opt_mode`**: Gradient descent behavior mode (`STANDARD_SGD` or `DC_ASGD`).
-*   **`num_threads`**: Number of parallel worker threads. Set to `0` to auto-detect hardware concurrency.
-*   **`log_interval`**: Frequency (in steps) of printing training metrics to the console.
-*   **`dataset`**: Target dataset to load (`MNIST` or `CIFAR`).
+### Parameter Reference
 
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `total_steps` | int | `1000` | Total training iterations per thread. |
+| `eta` | float | `0.1` | Learning rate. Use `~0.1` for SGD, `~0.001` for Adam/RMSProp. |
+| `momentum` | float | `0.9` | Momentum coefficient (SGD only). |
+| `beta1` | float | `0.9` | First moment decay rate (Adam only). |
+| `beta2` | float | `0.999` | Second moment decay rate (Adam and RMSProp). |
+| `epsilon` | float | `1e-8` | Numerical stability constant (Adam and RMSProp). |
+| `lambda` | float | `0.04` | DC-ASGD delay compensation penalty. |
+| `batch_size` | int | `64` | Samples per mini-batch. |
+| `exec_mode` | string | `"ASYNC_HOGWILD"` | Execution mode: `SEQUENTIAL`, `SYNC_PARALLEL`, or `ASYNC_HOGWILD`. |
+| `opt_algo` | string | `"SGD"` | Optimizer algorithm: `SGD`, `ADAM`, or `RMSPROP`. |
+| `opt_mode` | string | `"STANDARD_SGD"` | Gradient mode: `STANDARD_SGD` or `DC_ASGD` (async only). |
+| `num_threads` | int | `4` | Number of OpenMP threads. Set to `0` for auto-detect. |
+| `dataset` | string | `"CIFAR"` | Dataset: `MNIST` or `CIFAR`. |
+
+## Monitor Output
+
+Training progress is tracked by **epochs** (total images processed across all threads ÷ dataset size). The monitor logs every ~0.1 epochs:
+
+```
+[Monitor] Epoch:   1.02 | Elapsed:  10.98s
+          Avg Loss:   2.3045
+          Speed: 4613 images/sec | Total Img: 51200
+
+[Monitor] Epoch:   1.13 | Elapsed:  12.06s
+          Avg Loss:   2.2856
+          Speed: 4763 images/sec | Total Img: 56320
+```
+
+## Project Structure
+
+```
+Mini-Project/
+├── config.json              # Runtime configuration
+├── CMakeLists.txt           # Build system
+├── scripts/
+│   ├── get_datasets.sh      # Dataset download script
+│   └── install_deps.sh      # Dependency installer
+├── include/
+│   ├── config.hpp           # Config struct & enums
+│   ├── data.hpp             # DataLoader interface
+│   ├── dispatcher.hpp       # Async step dispatcher
+│   ├── engine.hpp           # TrainingEngine interface
+│   ├── model.hpp            # MiniDNN model wrapper
+│   ├── monitor.hpp          # Epoch-based monitor
+│   ├── optimizer.hpp        # Optimizer base + SGD/Adam/RMSProp
+│   └── worker.hpp           # Worker interface
+├── src/
+│   ├── main.cpp             # Entry point
+│   ├── config.cpp           # JSON config parser
+│   ├── data.cpp             # Dataset loaders (CIFAR-10, MNIST)
+│   ├── engine.cpp           # Engine execution logic
+│   ├── monitor.cpp          # Monitor implementation
+│   ├── optimizer.cpp        # Optimizer implementations
+│   └── worker.cpp           # Worker training loops
+├── third-party/
+│   ├── eigen/               # Eigen linear algebra library
+│   ├── MiniDNN/             # MiniDNN neural network library
+│   └── nlohmann/            # JSON parsing library
+└── data/
+    ├── cifar-10/            # CIFAR-10 binary files
+    └── mnist/               # MNIST binary files
+```
