@@ -39,6 +39,10 @@ Config load_config(const std::string &path) {
     config.lambda = j["lambda"];
   if (j.contains("batch_size"))
     config.batch_size = j["batch_size"];
+  if (j.contains("interval_size"))
+    config.interval_size = j["interval_size"];
+  if (j.contains("interval_decay_freq"))
+    config.interval_decay_freq = j["interval_decay_freq"];
   if (j.contains("num_threads"))
     config.num_threads = j["num_threads"];
   if (j.contains("log_interval"))
@@ -58,6 +62,8 @@ Config load_config(const std::string &path) {
       config.exec_mode = ExecutionMode::ASYNC_HOGWILD;
     else if (mode == "SYNC_PARALLEL")
       config.exec_mode = ExecutionMode::SYNC_PARALLEL;
+    else if (mode == "INTERVAL_ASYNC")
+      config.exec_mode = ExecutionMode::INTERVAL_ASYNC;
   }
 
   if (j.contains("opt_mode")) {

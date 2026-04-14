@@ -18,7 +18,8 @@ enum class DatasetType {
 enum class ExecutionMode {
   SEQUENTIAL,    ///< Pure single-threaded synchronous SGD
   ASYNC_HOGWILD, ///< Fully asynchronous Lock-free Hogwild! workers
-  SYNC_PARALLEL  ///< Synchronous parallel batch-accumulated SGD
+  SYNC_PARALLEL, ///< Synchronous parallel batch-accumulated SGD
+  INTERVAL_ASYNC ///< Interval-Based Asynchronous SGD
 };
 
 /**
@@ -50,6 +51,8 @@ struct Config {
   double momentum = 0.9;  // Momentum coefficient (NEW)
   double lambda = 0.04;   // DC-ASGD penalty
   int batch_size = 64;    // Mini-batch size
+  int interval_size = 50; // Interval boundary size
+  int interval_decay_freq = 4096; // Steps per interval decay (0 to disable)
   
   // Adam/RMSProp hyperparams
   double beta1 = 0.9;

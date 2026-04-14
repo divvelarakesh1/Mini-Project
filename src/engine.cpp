@@ -8,7 +8,7 @@
 
 TrainingEngine::TrainingEngine(const Config &config, DataLoader &loader)
     : config_(config), loader_(loader), monitor_(config, loader.num_samples()),
-      global_model_(config) {
+      dispatcher_(config), global_model_(config) {
   w_global_ = global_model_.get_weights();
 
   // Prepare accumulator for sync mode
@@ -43,6 +43,11 @@ void TrainingEngine::run() {
     break;
   case ExecutionMode::ASYNC_HOGWILD:
     std::cout << "[Engine] Mode: ASYNC_HOGWILD (Hogwild!)\n";
+    std::cout << "=====================================\n\n";
+    run_parallel_async();
+    break;
+  case ExecutionMode::INTERVAL_ASYNC:
+    std::cout << "[Engine] Mode: INTERVAL_ASYNC\n";
     std::cout << "=====================================\n\n";
     run_parallel_async();
     break;

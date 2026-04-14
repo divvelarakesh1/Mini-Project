@@ -45,7 +45,7 @@ A multithreaded deep learning training backend built from scratch in C++ using O
 | **DataLoader** | `data.hpp/cpp` | Thread-safe dataset provider. Loads CIFAR-10/MNIST from binary files, normalizes pixels to `[0, 1]`, and distributes batches via atomic cursors. |
 | **Monitor** | `monitor.hpp/cpp` | Lock-free metrics aggregator. Tracks training progress by **epochs** (total images processed / dataset size), logs average loss and throughput every 0.1 epochs. |
 | **Optimizer** | `optimizer.hpp/cpp` | Polymorphic optimizer with factory pattern. Supports SGD+Momentum, Adam, and RMSProp. Each worker thread owns a local optimizer instance. |
-| **Dispatcher** | `dispatcher.hpp` | Atomic step gate for async mode. Controls per-step concurrency flow (currently a pass-through, extensible for custom scheduling). |
+| **Dispatcher** | `dispatcher.hpp` | Step gate for parallel threads. Enforces interval-asynchrony boundaries and dynamic y-decay gating to control gradient staleness in async modes. |
 | **MiniDNNModel** | `model.hpp` | Wraps the MiniDNN header-only library. Builds dataset-specific CNN architectures and provides forward/backward pass + gradient extraction. |
 | **Config** | `config.hpp/cpp` | Loads all hyperparameters from `config.json` at runtime. Falls back to safe defaults if file is missing. |
 
@@ -57,7 +57,10 @@ Each thread independently reads global weights, computes a local forward/backwar
 ### 2. Synchronous Parallel (`SYNC_PARALLEL`)
 All threads compute gradients in lock-step using OpenMP barriers. Gradients are accumulated into a shared buffer, averaged by thread 0, and applied as a single update per step. Dataset is shuffled at epoch boundaries.
 
-### 3. Sequential (`SEQUENTIAL`)
+### 3. Interval-Asynchronous (`INTERVAL_ASYNC`)
+Combines Hogwild! with interval gating. Threads are allowed to run asynchronously within an "interval window" (set by `interval_size`). If a thread's gradient computation crosses an interval boundary (i.e., the global step has progressed too far), the update is dropped to prevent high staleness. Supports dynamic **Interval Decay** (y-decay) to gradually tighten synchronization.
+
+### 4. Sequential (`SEQUENTIAL`)
 Standard single-threaded SGD loop. Useful as a baseline for benchmarking parallel speedup and validating convergence behavior.
 
 ## Optimizer Algorithms
@@ -145,13 +148,16 @@ All hyperparameters are set in `config.json` — no recompilation needed.
   "momentum": 0.9,
   "lambda": 0.04,
   "batch_size": 128,
-  "exec_mode": "ASYNC_HOGWILD",
+  "interval_size": 128,
+  "interval_decay_freq": 4096,
+  "exec_mode": "INTERVAL_ASYNC",
   "opt_algo": "ADAM",
   "opt_mode": "STANDARD_SGD",
   "beta1": 0.9,
   "beta2": 0.999,
   "epsilon": 1e-8,
   "num_threads": 4,
+  "log_interval": 100,
   "dataset": "CIFAR"
 }
 ```
@@ -168,10 +174,13 @@ All hyperparameters are set in `config.json` — no recompilation needed.
 | `epsilon` | float | `1e-8` | Numerical stability constant (Adam and RMSProp). |
 | `lambda` | float | `0.04` | DC-ASGD delay compensation penalty. |
 | `batch_size` | int | `64` | Samples per mini-batch. |
-| `exec_mode` | string | `"ASYNC_HOGWILD"` | Execution mode: `SEQUENTIAL`, `SYNC_PARALLEL`, or `ASYNC_HOGWILD`. |
+| `interval_size` | int | `128` | Initial interval window size for `INTERVAL_ASYNC`. |
+| `interval_decay_freq` | int | `0` | Frequency (in steps) to decay `interval_size` by 1. Set to `0` to disable. |
+| `exec_mode` | string | `"ASYNC_HOGWILD"` | Execution mode: `SEQUENTIAL`, `SYNC_PARALLEL`, `ASYNC_HOGWILD`, or `INTERVAL_ASYNC`. |
 | `opt_algo` | string | `"SGD"` | Optimizer algorithm: `SGD`, `ADAM`, or `RMSPROP`. |
 | `opt_mode` | string | `"STANDARD_SGD"` | Gradient mode: `STANDARD_SGD` or `DC_ASGD` (async only). |
 | `num_threads` | int | `4` | Number of OpenMP threads. Set to `0` for auto-detect. |
+| `log_interval` | int | `100` | Frequency of logging metrics to console. |
 | `dataset` | string | `"CIFAR"` | Dataset: `MNIST` or `CIFAR`. |
 
 ## Monitor Output
@@ -187,6 +196,24 @@ Training progress is tracked by **epochs** (total images processed across all th
           Avg Loss:   2.2856
           Speed: 4763 images/sec | Total Img: 56320
 ```
+
+## Running Experiments
+
+An automated benchmark script is provided to compare all training modes:
+
+```bash
+python3 scripts/run_experiments.py
+```
+
+This script sequentially runs the following configurations and saves logs to the `logs/` directory:
+1.  **Sequential**: Baseline single-threaded training.
+2.  **Synchronous**: Standard data-parallel synchronization.
+3.  **Plain Async**: Unrestricted Hogwild! training.
+4.  **Async + Penalty**: Hogwild! with DC-ASGD delay compensation.
+5.  **Interval Async**: Interval-based asynchronous training.
+6.  **Interval Async + Penalty**: Combining interval gating with delay compensation.
+
+Logs can be analyzed to compare convergence speed and throughput across different staleness control strategies.
 
 ## Project Structure
 
