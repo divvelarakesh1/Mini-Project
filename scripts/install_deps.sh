@@ -46,6 +46,19 @@ else
     ok "MiniDNN installed → third-party/MiniDNN"
 fi
 
+# ── nlohmann/json ─────────────────────────────────────────────
+JSON_DIR="$THIRD_PARTY/nlohmann"
+JSON_URL="https://github.com/nlohmann/json/releases/latest/download/json.hpp"
+
+if [ -f "$JSON_DIR/json.hpp" ]; then
+    skip "nlohmann/json already present at third-party/nlohmann/json.hpp"
+else
+    log "Downloading nlohmann/json (single header) ..."
+    mkdir -p "$JSON_DIR"
+    curl -sSL "$JSON_URL" -o "$JSON_DIR/json.hpp"
+    ok "nlohmann/json installed → third-party/nlohmann/json.hpp"
+fi
+
 echo ""
 echo -e "${GREEN}All dependencies installed.${RESET}"
 echo -e "Now run:  ${CYAN}cmake -B build && cmake --build build${RESET}"

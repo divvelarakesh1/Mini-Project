@@ -106,13 +106,19 @@ Toggle between them by setting `"dataset"` to `"CIFAR"` or `"MNIST"` in `config.
 - OpenMP (macOS: `brew install libomp`)
 - Third-party libraries (Eigen, MiniDNN, nlohmann/json) are bundled in `third-party/`
 
-### 1. Download Datasets
+### 1. Install Dependencies
+```bash
+./scripts/install_deps.sh
+```
+This fetches Eigen, MiniDNN, and nlohmann/json into the `third-party/` directory.
+
+### 2. Download Datasets
 ```bash
 ./scripts/get_datasets.sh
 ```
 This fetches CIFAR-10 and MNIST binary files into the `data/` directory.
 
-### 2. Build
+### 3. Build
 ```bash
 mkdir -p build && cd build
 cmake ..
