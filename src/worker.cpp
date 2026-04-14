@@ -32,7 +32,7 @@ void Worker::run_async(int thread_id, ParameterList &global_weights,
     // Get weights after backward pass processing (Zero-copy)
     const ParameterList &local_weights = local_model.get_cached_weights();
 
-    monitor.record_step(thread_id, step, batch_loss, config.batch_size);
+    monitor.record(thread_id, batch_loss, config.batch_size);
 
     if (dispatcher.finish_step(start_idx)) {
       for (size_t layer = 0; layer < global_weights.size(); ++layer) {
@@ -96,7 +96,7 @@ void Worker::run_sync(int thread_id, ParameterList &global_weights,
     auto [local_gradients, batch_loss] =
         local_model.compute_gradients(batch_X, batch_Y);
 
-    monitor.record_step(thread_id, step, batch_loss, config.batch_size);
+    monitor.record(thread_id, batch_loss, config.batch_size);
 
     // Accumulate gradients synchronously
 #ifdef _OPENMP
@@ -169,7 +169,7 @@ void Worker::run_sequential(ParameterList &global_weights, DataLoader &loader,
     auto [local_gradients, batch_loss] =
         local_model.compute_gradients(batch_X, batch_Y);
 
-    monitor.record_step(0, step, batch_loss, config.batch_size);
+    monitor.record(0, batch_loss, config.batch_size);
 
     for (size_t layer = 0; layer < global_weights.size(); ++layer) {
       if (global_weights[layer].empty())

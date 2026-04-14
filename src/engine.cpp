@@ -7,7 +7,7 @@
 #endif
 
 TrainingEngine::TrainingEngine(const Config &config, DataLoader &loader)
-    : config_(config), loader_(loader), monitor_(config),
+    : config_(config), loader_(loader), monitor_(config, loader.num_samples()),
       global_model_(config) {
   w_global_ = global_model_.get_weights();
 
