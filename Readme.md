@@ -144,19 +144,22 @@ All hyperparameters are set in `config.json` — no recompilation needed.
 ```json
 {
   "total_steps": 10000,
+  "target_epochs": 0.0,
+  "target_time_seconds": 0.0,
   "eta": 0.001,
   "momentum": 0.9,
   "lambda": 0.04,
   "batch_size": 128,
-  "interval_size": 128,
+  "interval_size": 1024,
   "interval_decay_freq": 4096,
   "exec_mode": "INTERVAL_ASYNC",
   "opt_algo": "ADAM",
   "opt_mode": "STANDARD_SGD",
+  "stop_mode": "STEPS",
   "beta1": 0.9,
   "beta2": 0.999,
   "epsilon": 1e-8,
-  "num_threads": 4,
+  "num_threads": 32,
   "log_interval": 100,
   "dataset": "CIFAR"
 }
@@ -166,7 +169,9 @@ All hyperparameters are set in `config.json` — no recompilation needed.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `total_steps` | int | `1000` | Total training iterations per thread. |
+| `total_steps` | int | `1000` | Total training iterations per thread when `stop_mode` is `STEPS`. |
+| `target_epochs` | float | `0.0` | Epoch target used when `stop_mode` is `EPOCHS`. |
+| `target_time_seconds` | float | `0.0` | Wall-clock time target used when `stop_mode` is `TIME`. |
 | `eta` | float | `0.1` | Learning rate. Use `~0.1` for SGD, `~0.001` for Adam/RMSProp. |
 | `momentum` | float | `0.9` | Momentum coefficient (SGD only). |
 | `beta1` | float | `0.9` | First moment decay rate (Adam only). |
@@ -174,12 +179,13 @@ All hyperparameters are set in `config.json` — no recompilation needed.
 | `epsilon` | float | `1e-8` | Numerical stability constant (Adam and RMSProp). |
 | `lambda` | float | `0.04` | DC-ASGD delay compensation penalty. |
 | `batch_size` | int | `64` | Samples per mini-batch. |
-| `interval_size` | int | `128` | Initial interval window size for `INTERVAL_ASYNC`. |
+| `interval_size` | int | `1024` | Initial interval window size for `INTERVAL_ASYNC`. |
 | `interval_decay_freq` | int | `0` | Frequency (in steps) to decay `interval_size` by 1. Set to `0` to disable. |
 | `exec_mode` | string | `"ASYNC_HOGWILD"` | Execution mode: `SEQUENTIAL`, `SYNC_PARALLEL`, `ASYNC_HOGWILD`, or `INTERVAL_ASYNC`. |
 | `opt_algo` | string | `"SGD"` | Optimizer algorithm: `SGD`, `ADAM`, or `RMSPROP`. |
 | `opt_mode` | string | `"STANDARD_SGD"` | Gradient mode: `STANDARD_SGD` or `DC_ASGD` (async only). |
-| `num_threads` | int | `4` | Number of OpenMP threads. Set to `0` for auto-detect. |
+| `stop_mode` | string | `"STEPS"` | Training stop criterion: `STEPS`, `EPOCHS`, or `TIME`. |
+| `num_threads` | int | `32` | Number of OpenMP threads. Set to `0` for auto-detect. |
 | `log_interval` | int | `100` | Frequency of logging metrics to console. |
 | `dataset` | string | `"CIFAR"` | Dataset: `MNIST` or `CIFAR`. |
 
@@ -205,6 +211,26 @@ An automated benchmark script is provided to compare all training modes:
 python3 scripts/run_experiments.py
 ```
 
+You can also force a shared epoch-based or time-based stopping rule across all runs:
+
+```bash
+python3 scripts/run_experiments.py --epochs 5
+python3 scripts/run_experiments.py --seconds 300
+```
+
+By default, the script also parses the logs it generated and saves:
+- `metrics_summary.csv`
+- `loss_vs_epoch.png`
+- `loss_vs_time.png`
+- `epoch_vs_time.png`
+- `speed_vs_epoch.png`
+
+If you only want the raw logs, you can skip plot generation:
+
+```bash
+python3 scripts/run_experiments.py --epochs 5 --no-plots
+```
+
 This script sequentially runs the following configurations and saves logs to the `logs/` directory:
 1.  **Sequential**: Baseline single-threaded training.
 2.  **Synchronous**: Standard data-parallel synchronization.
@@ -213,7 +239,7 @@ This script sequentially runs the following configurations and saves logs to the
 5.  **Interval Async**: Interval-based asynchronous training.
 6.  **Interval Async + Penalty**: Combining interval gating with delay compensation.
 
-Logs can be analyzed to compare convergence speed and throughput across different staleness control strategies.
+Logs can be analyzed to compare convergence speed and throughput across different staleness control strategies. For fair cross-mode comparisons, prefer `--epochs` for equal data exposure and `--seconds` for equal wall-clock budgets.
 
 ## Project Structure
 

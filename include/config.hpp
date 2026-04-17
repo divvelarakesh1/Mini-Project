@@ -42,16 +42,28 @@ enum class OptimizerAlgorithm {
 };
 
 /**
+ * @enum StopMode
+ * @brief Represents the primary training termination criterion.
+ */
+enum class StopMode {
+  STEPS,  ///< Stop after total_steps iterations per thread
+  EPOCHS, ///< Stop after target_epochs total data epochs
+  TIME    ///< Stop after target_time_seconds wall-clock seconds
+};
+
+/**
  * @struct Config
  * @brief The globally scoped configuration struct for the ML Parallel Engine.
  */
 struct Config {
   int total_steps = 1000;
+  double target_epochs = 0.0;
+  double target_time_seconds = 0.0;
   double eta = 0.1;       // Learning rate
   double momentum = 0.9;  // Momentum coefficient (NEW)
   double lambda = 0.04;   // DC-ASGD penalty
   int batch_size = 64;    // Mini-batch size
-  int interval_size = 50; // Interval boundary size
+  int interval_size = 1024; // Interval boundary size
   int interval_decay_freq = 4096; // Steps per interval decay (0 to disable)
   
   // Adam/RMSProp hyperparams
@@ -62,8 +74,9 @@ struct Config {
   ExecutionMode exec_mode = ExecutionMode::ASYNC_HOGWILD;
   OptimizerMode opt_mode = OptimizerMode::STANDARD_SGD;
   OptimizerAlgorithm opt_algo = OptimizerAlgorithm::SGD;
+  StopMode stop_mode = StopMode::STEPS;
   
-  int num_threads = 4;    // Number of threads
+  int num_threads = 32;   // Number of threads
   int log_interval = 100; // Interval at which the Monitor prints stats
   DatasetType dataset = DatasetType::CIFAR; // Target dataset
 };

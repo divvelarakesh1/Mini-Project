@@ -30,6 +30,7 @@ public:
    * throughput.
    */
   void record(int thread_id, double batch_loss, int batch_size);
+  bool should_stop() const;
 
 private:
   const Config &config_;
@@ -47,6 +48,8 @@ private:
   std::vector<ThreadStats> snapshot_stats_;
 
   double last_logged_epoch_{0.0};
+  std::atomic<bool> stop_requested_{false};
+  std::atomic<bool> final_log_emitted_{false};
 
   std::mutex print_mtx_; // Exclusively for console stdout formatting
 

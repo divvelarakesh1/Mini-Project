@@ -31,6 +31,10 @@ Config load_config(const std::string &path) {
 
   if (j.contains("total_steps"))
     config.total_steps = j["total_steps"];
+  if (j.contains("target_epochs"))
+    config.target_epochs = j["target_epochs"];
+  if (j.contains("target_time_seconds"))
+    config.target_time_seconds = j["target_time_seconds"];
   if (j.contains("eta"))
     config.eta = j["eta"];
   if (j.contains("momentum"))
@@ -82,6 +86,16 @@ Config load_config(const std::string &path) {
       config.opt_algo = OptimizerAlgorithm::ADAM;
     else if (algo == "RMSPROP")
       config.opt_algo = OptimizerAlgorithm::RMSPROP;
+  }
+
+  if (j.contains("stop_mode")) {
+    std::string mode = j["stop_mode"];
+    if (mode == "STEPS")
+      config.stop_mode = StopMode::STEPS;
+    else if (mode == "EPOCHS")
+      config.stop_mode = StopMode::EPOCHS;
+    else if (mode == "TIME")
+      config.stop_mode = StopMode::TIME;
   }
 
   if (j.contains("dataset")) {

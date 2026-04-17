@@ -1,5 +1,6 @@
 #include "worker.hpp"
 #include "optimizer.hpp"
+#include <algorithm>
 #include <Eigen/Core>
 
 #ifdef _OPENMP
@@ -7,6 +8,36 @@
 #endif
 
 using EigenArrayXS = Eigen::Array<double, Eigen::Dynamic, 1>;
+
+namespace {
+
+bool uses_dynamic_stop(const Config &config) {
+  if (config.stop_mode == StopMode::EPOCHS) {
+    return config.target_epochs > 0.0;
+  }
+
+  if (config.stop_mode == StopMode::TIME) {
+    return config.target_time_seconds > 0.0;
+  }
+
+  return false;
+}
+
+bool should_start_step(int step, const Config &config, const Monitor &monitor) {
+  if (uses_dynamic_stop(config)) {
+    return !monitor.should_stop();
+  }
+
+  return step < config.total_steps;
+}
+
+int sync_steps_per_epoch(const DataLoader &loader, const Config &config) {
+  int effective_threads = std::max(1, config.num_threads);
+  int global_batch = std::max(1, config.batch_size * effective_threads);
+  return std::max(1, loader.num_samples() / global_batch);
+}
+
+} // namespace
 
 // ==============================================================================
 // MODE 1: ASYNCHRONOUS (Hogwild! + DC-ASGD + Momentum)
@@ -19,7 +50,7 @@ void Worker::run_async(int thread_id, ParameterList &global_weights,
   MiniDNNModel local_model(config);
   auto local_opt = Optimizer::create(config, global_weights);
 
-  for (int step = 0; step < config.total_steps; ++step) {
+  for (int step = 0; should_start_step(step, config, monitor); ++step) {
     auto [can_start, start_idx] = dispatcher.try_start_step();
     if (!can_start)
       continue;
@@ -70,15 +101,18 @@ void Worker::run_sync(int thread_id, ParameterList &global_weights,
 
   MiniDNNModel local_model(config);
   auto local_opt = Optimizer::create(config, global_weights);
-  int steps_per_epoch = std::max(1, loader.num_samples() / config.batch_size);
+  int steps_per_epoch = sync_steps_per_epoch(loader, config);
 
-  for (int step = 0; step < config.total_steps; ++step) {
-
-    // Shuffle data at the beginning of an epoch, protected by thread barriers
-    if (step > 0 && (step % steps_per_epoch == 0)) {
+  for (int step = 0;; ++step) {
 #ifdef _OPENMP
 #pragma omp barrier
 #endif
+    if (!should_start_step(step, config, monitor)) {
+      break;
+    }
+
+    // Shuffle data at the beginning of an epoch, protected by thread barriers
+    if (step > 0 && (step % steps_per_epoch == 0)) {
       if (thread_id == 0) {
         loader.shuffle();
       }
@@ -146,6 +180,10 @@ void Worker::run_sync(int thread_id, ParameterList &global_weights,
 #ifdef _OPENMP
 #pragma omp barrier
 #endif
+
+    if (uses_dynamic_stop(config) && monitor.should_stop()) {
+      break;
+    }
   }
 }
 
@@ -159,7 +197,7 @@ void Worker::run_sequential(ParameterList &global_weights, DataLoader &loader,
   auto local_opt = Optimizer::create(config, global_weights);
   int steps_per_epoch = std::max(1, loader.num_samples() / config.batch_size);
 
-  for (int step = 0; step < config.total_steps; ++step) {
+  for (int step = 0; should_start_step(step, config, monitor); ++step) {
     if (step > 0 && (step % steps_per_epoch == 0)) {
       loader.shuffle();
     }
