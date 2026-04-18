@@ -40,6 +40,9 @@ set(PROJECT_SOURCES
     src/engine.cpp
     src/config.cpp
     src/optimizer.cpp
+    src/dispatcher.cpp
+    src/model.cpp
+    src/prober.cpp
 )
 
 add_executable(mini_project ${PROJECT_SOURCES})
@@ -57,8 +60,15 @@ target_link_libraries(mini_project PRIVATE Eigen MiniDNN nlohmann_json)
 # The Apple Silicon Bulletproof OpenMP Fix
 # ──────────────────────────────────────────────
 if(APPLE)
-    # 1. Ask Mac exactly where Homebrew lives
-    execute_process(COMMAND brew --prefix OUTPUT_VARIABLE HOMEBREW_PREFIX OUTPUT_STRIP_TRAILING_WHITESPACE)
+    # 1. Ask Mac exactly where Homebrew lives, fallback if brew not in path
+    execute_process(COMMAND brew --prefix OUTPUT_VARIABLE HOMEBREW_PREFIX OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    if(NOT HOMEBREW_PREFIX)
+        if(EXISTS "/opt/homebrew")
+            set(HOMEBREW_PREFIX "/opt/homebrew")
+        else()
+            set(HOMEBREW_PREFIX "/usr/local")
+        endif()
+    endif()
     
     # 2. Force AppleClang to use OpenMP directly (Bypass find_package completely)
     target_compile_options(mini_project PRIVATE -Xclang -fopenmp)

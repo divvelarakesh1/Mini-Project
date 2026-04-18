@@ -13,10 +13,6 @@ namespace Worker {
 void run_async(int thread_id, ParameterList &global_weights, DataLoader &loader,
                Dispatcher &dispatcher, const Config &config, Monitor &monitor);
 
-void run_sync(int thread_id, ParameterList &global_weights,
-              ParameterList &global_gradient_accumulator, DataLoader &loader,
-              const Config &config, Monitor &monitor);
-
 void run_sequential(ParameterList &global_weights, DataLoader &loader,
                     const Config &config, Monitor &monitor);
 

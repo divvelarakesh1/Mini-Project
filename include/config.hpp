@@ -18,7 +18,6 @@ enum class DatasetType {
 enum class ExecutionMode {
   SEQUENTIAL,    ///< Pure single-threaded synchronous SGD
   ASYNC_HOGWILD, ///< Fully asynchronous Lock-free Hogwild! workers
-  SYNC_PARALLEL, ///< Synchronous parallel batch-accumulated SGD
   INTERVAL_ASYNC ///< Interval-Based Asynchronous SGD
 };
 
@@ -28,17 +27,8 @@ enum class ExecutionMode {
  */
 enum class OptimizerMode {
   STANDARD_SGD, ///< Vanilla gradient subtraction
-  DC_ASGD       ///< Delay-Compensated ASGD penalty logic
-};
-
-/**
- * @enum OptimizerAlgorithm
- * @brief Represents the core optimization algorithm.
- */
-enum class OptimizerAlgorithm {
-  SGD,     ///< Stochastic Gradient Descent (with momentum)
-  ADAM,    ///< Adam Optimization
-  RMSPROP  ///< RMSProp Optimization
+  DC_ASGD_C,    ///< Delay-Compensated ASGD with constant λ
+  DC_ASGD_A     ///< Delay-Compensated ASGD with adaptive λ (RMSProp-style)
 };
 
 /**
@@ -46,7 +36,6 @@ enum class OptimizerAlgorithm {
  * @brief Represents the primary training termination criterion.
  */
 enum class StopMode {
-  STEPS,  ///< Stop after total_steps iterations per thread
   EPOCHS, ///< Stop after target_epochs total data epochs
   TIME    ///< Stop after target_time_seconds wall-clock seconds
 };
@@ -56,29 +45,36 @@ enum class StopMode {
  * @brief The globally scoped configuration struct for the ML Parallel Engine.
  */
 struct Config {
-  int total_steps = 1000;
   double target_epochs = 0.0;
   double target_time_seconds = 0.0;
-  double eta = 0.1;       // Learning rate
-  double momentum = 0.9;  // Momentum coefficient (NEW)
-  double lambda = 0.04;   // DC-ASGD penalty
-  int batch_size = 64;    // Mini-batch size
-  int interval_size = 1024; // Interval boundary size
-  int interval_decay_freq = 4096; // Steps per interval decay (0 to disable)
-  
-  // Adam/RMSProp hyperparams
-  double beta1 = 0.9;
-  double beta2 = 0.999;
-  double epsilon = 1e-8;
-  
+  double eta = 0.1;                      // Learning rate
+  double momentum = 0.9;                 // Momentum coefficient
+  double lambda = 0.04;                  // DC-ASGD base λ₀
+  double dc_asgd_rms_momentum = 0.95;    // Adaptive λ moving average decay (m)
+  double dc_asgd_rms_epsilon = 1e-7;     // Adaptive λ numerical stability (ε)
+  int batch_size = 64;            // Mini-batch size
+  int interval_size = 128;        // Default static Interval boundary size
+
+  // -------------------------------------------------------------------------
+  // Probing strategy for Interval Async and Thread Balancing
+  // -------------------------------------------------------------------------
+  bool use_probing = false;              // -c probe (Interval Probing)
+  bool use_thread_probing = false;       // Enable dynamic thread count optimization
+  int probe_initial_interval = 64;       // -y (o_semisync_period)
+  int probe_min_interval = 4;            // -m (o_semisync_period_min)
+  int probe_test_steps = 100;            // Number of steps to run each probe test
+  int probe_exec_steps = 5000;          // Steps of fixed execution between probes
+  int thread_min_count = 1;              // Minimum thread count for probing
+  // -------------------------------------------------------------------------
+
   ExecutionMode exec_mode = ExecutionMode::ASYNC_HOGWILD;
-  OptimizerMode opt_mode = OptimizerMode::STANDARD_SGD;
-  OptimizerAlgorithm opt_algo = OptimizerAlgorithm::SGD;
-  StopMode stop_mode = StopMode::STEPS;
-  
+  OptimizerMode opt_mode = OptimizerMode::DC_ASGD_A;
+
+  StopMode stop_mode = StopMode::EPOCHS;
+
   int num_threads = 32;   // Number of threads
-  int log_interval = 100; // Interval at which the Monitor prints stats
   DatasetType dataset = DatasetType::CIFAR; // Target dataset
 };
 
-Config load_config(const std::string& path);
+
+Config load_config(const std::string &path);

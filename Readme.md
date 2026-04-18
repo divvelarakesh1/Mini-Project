@@ -1,6 +1,6 @@
 # Parallel Deep Learning Training Engine
 
-A multithreaded deep learning training backend built from scratch in C++ using OpenMP. Trains convolutional neural networks on CIFAR-10 and MNIST datasets with support for multiple execution modes (Hogwild!, Synchronous Parallel, Sequential) and multiple optimizer algorithms (SGD with Momentum, Adam, RMSProp).
+A multithreaded deep learning training backend built from scratch in C++ using OpenMP. Trains convolutional neural networks on CIFAR-10 and MNIST datasets with support for multiple execution modes (Hogwild!, Sequential, Interval-Asynchronous) and multiple optimizer algorithms (SGD with Momentum, Adam, RMSProp).
 
 ## Architecture Overview
 
@@ -41,7 +41,7 @@ A multithreaded deep learning training backend built from scratch in C++ using O
 | Component | File(s) | Purpose |
 |-----------|---------|---------|
 | **TrainingEngine** | `engine.hpp/cpp` | Central orchestrator. Initializes threads, routes execution modes, binds the data loader and monitor to workers. |
-| **Worker** | `worker.hpp/cpp` | The compute kernel. Each thread runs a Worker loop that pulls batches, computes gradients, and updates global weights. Three modes are supported (see below). |
+| **Worker** | `worker.hpp/cpp` | The compute kernel. Each thread runs a Worker loop that pulls batches, computes gradients, and updates global weights. Multiple modes are supported (see below). |
 | **DataLoader** | `data.hpp/cpp` | Thread-safe dataset provider. Loads CIFAR-10/MNIST from binary files, normalizes pixels to `[0, 1]`, and distributes batches via atomic cursors. |
 | **Monitor** | `monitor.hpp/cpp` | Lock-free metrics aggregator. Tracks training progress by **epochs** (total images processed / dataset size), logs average loss and throughput every 0.1 epochs. |
 | **Optimizer** | `optimizer.hpp/cpp` | Polymorphic optimizer with factory pattern. Supports SGD+Momentum, Adam, and RMSProp. Each worker thread owns a local optimizer instance. |
@@ -54,13 +54,10 @@ A multithreaded deep learning training backend built from scratch in C++ using O
 ### 1. Asynchronous — Hogwild! (`ASYNC_HOGWILD`)
 Each thread independently reads global weights, computes a local forward/backward pass, and writes gradients back to shared memory **without locks**. Supports optional **DC-ASGD** (Delay-Compensated ASGD) penalty to stabilize convergence under high staleness.
 
-### 2. Synchronous Parallel (`SYNC_PARALLEL`)
-All threads compute gradients in lock-step using OpenMP barriers. Gradients are accumulated into a shared buffer, averaged by thread 0, and applied as a single update per step. Dataset is shuffled at epoch boundaries.
-
-### 3. Interval-Asynchronous (`INTERVAL_ASYNC`)
+### 2. Interval-Asynchronous (`INTERVAL_ASYNC`)
 Combines Hogwild! with interval gating. Threads are allowed to run asynchronously within an "interval window" (set by `interval_size`). If a thread's gradient computation crosses an interval boundary (i.e., the global step has progressed too far), the update is dropped to prevent high staleness. Supports dynamic **Interval Decay** (y-decay) to gradually tighten synchronization.
 
-### 4. Sequential (`SEQUENTIAL`)
+### 3. Sequential (`SEQUENTIAL`)
 Standard single-threaded SGD loop. Useful as a baseline for benchmarking parallel speedup and validating convergence behavior.
 
 ## Optimizer Algorithms
@@ -181,7 +178,7 @@ All hyperparameters are set in `config.json` — no recompilation needed.
 | `batch_size` | int | `64` | Samples per mini-batch. |
 | `interval_size` | int | `1024` | Initial interval window size for `INTERVAL_ASYNC`. |
 | `interval_decay_freq` | int | `0` | Frequency (in steps) to decay `interval_size` by 1. Set to `0` to disable. |
-| `exec_mode` | string | `"ASYNC_HOGWILD"` | Execution mode: `SEQUENTIAL`, `SYNC_PARALLEL`, `ASYNC_HOGWILD`, or `INTERVAL_ASYNC`. |
+| `exec_mode` | string | `"ASYNC_HOGWILD"` | Execution mode: `SEQUENTIAL`, `ASYNC_HOGWILD`, or `INTERVAL_ASYNC`. |
 | `opt_algo` | string | `"SGD"` | Optimizer algorithm: `SGD`, `ADAM`, or `RMSPROP`. |
 | `opt_mode` | string | `"STANDARD_SGD"` | Gradient mode: `STANDARD_SGD` or `DC_ASGD` (async only). |
 | `stop_mode` | string | `"STEPS"` | Training stop criterion: `STEPS`, `EPOCHS`, or `TIME`. |
@@ -233,11 +230,10 @@ python3 scripts/run_experiments.py --epochs 5 --no-plots
 
 This script sequentially runs the following configurations and saves logs to the `logs/` directory:
 1.  **Sequential**: Baseline single-threaded training.
-2.  **Synchronous**: Standard data-parallel synchronization.
-3.  **Plain Async**: Unrestricted Hogwild! training.
-4.  **Async + Penalty**: Hogwild! with DC-ASGD delay compensation.
-5.  **Interval Async**: Interval-based asynchronous training.
-6.  **Interval Async + Penalty**: Combining interval gating with delay compensation.
+2.  **Plain Async**: Unrestricted Hogwild! training.
+3.  **Async + Penalty**: Hogwild! with DC-ASGD delay compensation.
+4.  **Interval Async**: Interval-based asynchronous training.
+5.  **Interval Async + Penalty**: Combining interval gating with delay compensation.
 
 Logs can be analyzed to compare convergence speed and throughput across different staleness control strategies. For fair cross-mode comparisons, prefer `--epochs` for equal data exposure and `--seconds` for equal wall-clock budgets.
 

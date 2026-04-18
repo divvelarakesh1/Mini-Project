@@ -5,6 +5,7 @@
 #include <vector>
 
 struct Config;
+class Prober;
 
 /**
  * @class Monitor
@@ -31,6 +32,7 @@ public:
    */
   void record(int thread_id, double batch_loss, int batch_size);
   bool should_stop() const;
+  void set_prober(Prober *prober) { prober_ = prober; }
 
 private:
   const Config &config_;
@@ -40,20 +42,28 @@ private:
     long long images{0};
     double accumulated_loss{0.0};
     long long batches{0};
-    double min_loss{1e9};
-    double max_loss{-1e9};
   };
 
   std::vector<ThreadStats> active_stats_;
   std::vector<ThreadStats> snapshot_stats_;
 
+  std::atomic<long long> global_images_processed_{0};
+  std::atomic<long long> global_batches_processed_{0};
+
   double last_logged_epoch_{0.0};
   std::atomic<bool> stop_requested_{false};
   std::atomic<bool> final_log_emitted_{false};
 
-  std::mutex print_mtx_; // Exclusively for console stdout formatting
+  std::mutex print_mtx_;
 
-  using TimePoint = std::chrono::time_point<std::chrono::high_resolution_clock>;
+  using Clock = std::chrono::steady_clock;
+  using TimePoint = std::chrono::time_point<Clock>;
   TimePoint start_time_;
   TimePoint last_log_time_;
+
+  // UI Helpers
+  std::string get_progress_bar(double progress, int width = 30) const;
+  std::string format_time(double seconds) const;
+
+  Prober *prober_{nullptr};
 };

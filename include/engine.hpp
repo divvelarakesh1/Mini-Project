@@ -4,10 +4,14 @@
 #include "dispatcher.hpp"
 #include "monitor.hpp"
 #include "model.hpp"
+#include <memory>
+
+class Prober;
 
 class TrainingEngine {
 public:
     TrainingEngine(const Config& config, DataLoader& loader);
+    ~TrainingEngine();
 
     // Main entry point for the engine, manages threading internally
     void run();
@@ -17,13 +21,12 @@ private:
     DataLoader& loader_;
     Monitor monitor_;
     Dispatcher dispatcher_;
+    std::unique_ptr<Prober> prober_;
     
     // Global model instances
     MiniDNNModel global_model_;
     ParameterList w_global_;         // Global Weights
-    ParameterList g_global_accum_;   // Gradient Accumulator (Sync Mode)
 
     void run_sequential();
-    void run_parallel_sync();
     void run_parallel_async();
 };
