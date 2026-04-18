@@ -29,9 +29,53 @@ BUILD_DIR = os.path.join(PROJECT_ROOT, "build")
 EXECUTABLE = "./mini_project"
 LOGS_DIR = os.path.join(PROJECT_ROOT, "logs")
 
-MONITOR_PATTERN = re.compile(r"\[Monitor\]\s+Epoch:\s*([0-9.]+)\s*\|\s*Elapsed:\s*([0-9.]+)s")
-LOSS_PATTERN = re.compile(r"Avg Loss:\s*([-+0-9.eE]+)")
-SPEED_PATTERN = re.compile(r"Speed:\s*([-+0-9.eE]+)\s+images/sec")
+# ANSI stripping regex
+ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+
+def strip_ansi(text):
+    return ANSI_ESCAPE.sub('', text)
+
+def duration_to_seconds(duration_str):
+    """Converts MM:SS or HH:MM:SS to total seconds."""
+    try:
+        parts = list(map(int, duration_str.split(':')))
+        if len(parts) == 2: # MM:SS
+            return float(parts[0] * 60 + parts[1])
+        if len(parts) == 3: # HH:MM:SS
+            return float(parts[0] * 3600 + parts[1] * 60 + parts[2])
+    except Exception:
+        pass
+    return 0.0
+
+def downsample_points(xs, ys, max_points=100):
+    """Reduces the number of points by averaging them into buckets."""
+    n = len(xs)
+    if n <= max_points:
+        return xs, ys
+    
+    bucket_size = n / max_points
+    new_xs = []
+    new_ys = []
+    
+    for i in range(max_points):
+        start = int(i * bucket_size)
+        end = int((i + 1) * bucket_size) if i < max_points - 1 else n
+        
+        if start >= end:
+            continue
+            
+        bucket_xs = xs[start:end]
+        bucket_ys = ys[start:end]
+        
+        new_xs.append(sum(bucket_xs) / len(bucket_xs))
+        new_ys.append(sum(bucket_ys) / len(bucket_ys))
+        
+    return new_xs, new_ys
+
+MONITOR_PATTERN = re.compile(r"\[Monitor\]\s+Epoch:\s*([0-9.]+)")
+LOSS_PATTERN = re.compile(r"Loss:\s*([-+0-9.eE]+)")
+SPEED_PATTERN = re.compile(r"([0-9.]+)\s+img/s")
+ELAPSED_PATTERN = re.compile(r"Elapsed:\s*([0-9:]+)")
 
 # ==============================================================================
 # EXPERIMENT DEFINITIONS
@@ -129,30 +173,38 @@ def parse_log_metrics(log_path):
         lines = f.readlines()
 
     for idx, line in enumerate(lines):
-        monitor_match = MONITOR_PATTERN.search(line)
+        clean_line = strip_ansi(line)
+        monitor_match = MONITOR_PATTERN.search(clean_line)
         if not monitor_match:
             continue
 
         epoch = float(monitor_match.group(1))
-        elapsed = float(monitor_match.group(2))
-        loss = None
+        
+        # Loss is on the same line as Epoch
+        loss_match = LOSS_PATTERN.search(clean_line)
+        loss = float(loss_match.group(1)) if loss_match else None
+        
+        elapsed = None
         speed = None
 
+        # Speed and Elapsed are on the next line
         if idx + 1 < len(lines):
-            loss_match = LOSS_PATTERN.search(lines[idx + 1])
-            if loss_match:
-                loss = float(loss_match.group(1))
-        if idx + 2 < len(lines):
-            speed_match = SPEED_PATTERN.search(lines[idx + 2])
+            next_line = strip_ansi(lines[idx + 1])
+            speed_match = SPEED_PATTERN.search(next_line)
             if speed_match:
                 speed = float(speed_match.group(1))
+            
+            elapsed_match = ELAPSED_PATTERN.search(next_line)
+            if elapsed_match:
+                elapsed = duration_to_seconds(elapsed_match.group(1))
 
-        metrics.append({
-            "epoch": epoch,
-            "elapsed_seconds": elapsed,
-            "avg_loss": loss,
-            "speed_images_per_sec": speed,
-        })
+        if epoch is not None:
+            metrics.append({
+                "epoch": epoch,
+                "elapsed_seconds": elapsed,
+                "avg_loss": loss,
+                "speed_images_per_sec": speed,
+            })
     return metrics
 
 def write_metrics_csv(logs_dir, series_by_name):
@@ -177,6 +229,10 @@ def plot_metric(logs_dir, run_label, series_by_name, x_key, y_key, title, filena
         ys = [point[y_key] for point in metrics if point.get(x_key) is not None and point.get(y_key) is not None]
         if not xs or not ys:
             continue
+            
+        # Target ~100 points per line for clarity
+        xs, ys = downsample_points(xs, ys, max_points=100)
+        
         plt.plot(xs, ys, marker="o", linewidth=2, markersize=4, label=exp_name)
         plotted_any = True
 
@@ -215,10 +271,11 @@ def generate_reports(logs_dir, run_label):
         return
 
     plot_specs = [
-        ("epoch", "avg_loss", "Average Loss vs Epoch", "loss_vs_epoch.png", "Epoch", "Average Loss"),
         ("elapsed_seconds", "avg_loss", "Average Loss vs Time", "loss_vs_time.png", "Elapsed Time (s)", "Average Loss"),
-        ("elapsed_seconds", "epoch", "Epoch Progress vs Time", "epoch_vs_time.png", "Elapsed Time (s)", "Epoch"),
+        ("elapsed_seconds", "speed_images_per_sec", "Throughput vs Time", "speed_vs_time.png", "Elapsed Time (s)", "Images / sec"),
+        ("epoch", "avg_loss", "Average Loss vs Epoch", "loss_vs_epoch.png", "Epoch", "Average Loss"),
         ("epoch", "speed_images_per_sec", "Throughput vs Epoch", "speed_vs_epoch.png", "Epoch", "Images / sec"),
+        ("elapsed_seconds", "epoch", "Epoch Progress vs Time", "epoch_vs_time.png", "Elapsed Time (s)", "Epoch"),
     ]
 
     for x_key, y_key, title, filename, xlabel, ylabel in plot_specs:

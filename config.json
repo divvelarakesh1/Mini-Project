@@ -1,11 +1,11 @@
 {
   "target_epochs": 10.0,
-  "target_time_seconds": 600.0,
+  "target_time_seconds": 300.0,
   "eta": 0.005,
   "momentum": 0.5,
   "lambda": 1.0,
   "dc_asgd_rms_momentum": 0.95,
-  "dc_asgd_rms_epsilon": 1e-7,
+  "dc_asgd_rms_epsilon": 1e-07,
   "batch_size": 16,
   "interval_size": 64,
   "exec_mode": "ASYNC_HOGWILD",
@@ -13,7 +13,6 @@
   "stop_mode": "TIME",
   "num_threads": 64,
   "dataset": "CIFAR",
-
   "use_probing": false,
   "use_thread_probing": false,
   "thread_min_count": 1,
