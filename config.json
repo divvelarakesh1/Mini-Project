@@ -1,23 +1,27 @@
 {
-  "target_epochs": 10.0,
-  "target_time_seconds": 300.0,
   "eta": 0.005,
   "momentum": 0.5,
-  "lambda": 1.0,
+  "batch_size": 16,
+  "lambda": 2.0,
   "dc_asgd_rms_momentum": 0.95,
   "dc_asgd_rms_epsilon": 1e-07,
-  "batch_size": 16,
+
+  "interval_mode": "PROBING",
+  "thread_mode": "PROBING",
   "interval_size": 64,
-  "exec_mode": "ASYNC_HOGWILD",
-  "opt_mode": "DC_ASGD_A",
-  "stop_mode": "TIME",
-  "num_threads": 64,
-  "dataset": "CIFAR",
-  "use_probing": false,
-  "use_thread_probing": false,
+  "min_interval": 32,
+
+  "decay_steps": 1000,
+  "decay_amount": 4,
+  "probe_test_steps": 1024,
+  "probe_exec_steps": 8192,
   "thread_min_count": 1,
-  "probe_initial_interval": 128,
-  "probe_min_interval": 4,
-  "probe_test_steps": 1000,
-  "probe_exec_steps": 5000
+
+  "exec_mode": "INTERVAL_ASYNC",
+  "opt_mode": "DC_ASGD_A",
+  "dataset": "CIFAR",
+  "num_threads": 32,
+  "stop_mode": "TIME",
+  "target_epochs": 10.0,
+  "target_time_seconds": 300.0
 }

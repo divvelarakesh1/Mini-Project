@@ -41,39 +41,58 @@ enum class StopMode {
 };
 
 /**
+ * @enum IntervalMode
+ * @brief Represents how the synchronization interval is adjusted.
+ */
+enum class IntervalMode {
+  STATIC,  ///< Single fixed interval for duration of run.
+  DECAY,   ///< Gradually reduces the interval periodically.
+  PROBING  ///< Dynamically optimizes interval using probing.
+};
+
+/**
+ * @enum ThreadMode
+ * @brief Represents how the thread count is adjusted.
+ */
+enum class ThreadMode {
+  STATIC,  ///< Use num_threads for the duration of the run.
+  PROBING  ///< Dynamically optimizes thread count using probing.
+};
+
+/**
  * @struct Config
  * @brief The globally scoped configuration struct for the ML Parallel Engine.
  */
 struct Config {
-  double target_epochs = 0.0;
-  double target_time_seconds = 0.0;
+  // 1. Core Hyperparameters
   double eta = 0.1;                      // Learning rate
   double momentum = 0.9;                 // Momentum coefficient
+  int batch_size = 64;                   // Mini-batch size
   double lambda = 0.04;                  // DC-ASGD base λ₀
   double dc_asgd_rms_momentum = 0.95;    // Adaptive λ moving average decay (m)
   double dc_asgd_rms_epsilon = 1e-7;     // Adaptive λ numerical stability (ε)
-  int batch_size = 64;            // Mini-batch size
-  int interval_size = 128;        // Default static Interval boundary size
 
-  // -------------------------------------------------------------------------
-  // Probing strategy for Interval Async and Thread Balancing
-  // -------------------------------------------------------------------------
-  bool use_probing = false;              // -c probe (Interval Probing)
-  bool use_thread_probing = false;       // Enable dynamic thread count optimization
-  int probe_initial_interval = 64;       // -y (o_semisync_period)
-  int probe_min_interval = 4;            // -m (o_semisync_period_min)
-  int probe_test_steps = 100;            // Number of steps to run each probe test
-  int probe_exec_steps = 5000;          // Steps of fixed execution between probes
-  int thread_min_count = 1;              // Minimum thread count for probing
-  // -------------------------------------------------------------------------
-
+  // 2. Synchronization Strategy
   ExecutionMode exec_mode = ExecutionMode::ASYNC_HOGWILD;
   OptimizerMode opt_mode = OptimizerMode::DC_ASGD_A;
+  IntervalMode interval_mode = IntervalMode::STATIC;
+  ThreadMode thread_mode = ThreadMode::STATIC;
+  int interval_size = 128;               // baseline sync boundary
+  int min_interval = 4;                  // absolute floor for any adjustment
 
+  // 3. Adjustment Dynamics (Probing / Decay)
+  int decay_steps = 1000;                // Interval decrease frequency
+  int decay_amount = 4;                  // Amount to subtract from interval
+  int probe_test_steps = 100;            // Steps to run each probe test
+  int probe_exec_steps = 5000;           // Steps of fixed execution between probes
+  int thread_min_count = 1;              // Minimum thread count for probing
+
+  // 4. Resources & Termination
+  int num_threads = 32;                  // Max threads to spawn
+  DatasetType dataset = DatasetType::CIFAR; 
   StopMode stop_mode = StopMode::EPOCHS;
-
-  int num_threads = 32;   // Number of threads
-  DatasetType dataset = DatasetType::CIFAR; // Target dataset
+  double target_epochs = 0.0;
+  double target_time_seconds = 0.0;
 };
 
 

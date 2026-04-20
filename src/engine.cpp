@@ -11,7 +11,7 @@ TrainingEngine::TrainingEngine(const Config &config, DataLoader &loader)
     : config_(config), loader_(loader), monitor_(config, loader.num_samples()),
       dispatcher_(config), global_model_(config) {
   
-  if (config_.use_probing || config_.use_thread_probing) {
+  if (config_.interval_mode != IntervalMode::STATIC || config_.thread_mode != ThreadMode::STATIC) {
     prober_ = std::make_unique<Prober>(config_, dispatcher_);
     monitor_.set_prober(prober_.get());
   }

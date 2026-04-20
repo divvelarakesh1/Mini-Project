@@ -33,38 +33,63 @@ Config load_config(const std::string &path) {
     config.target_epochs = j["target_epochs"];
   if (j.contains("target_time_seconds"))
     config.target_time_seconds = j["target_time_seconds"];
-  if (j.contains("eta"))
-    config.eta = j["eta"];
-  if (j.contains("momentum"))
-    config.momentum = j["momentum"];
-  if (j.contains("lambda"))
-    config.lambda = j["lambda"];
-  if (j.contains("dc_asgd_rms_momentum"))
-    config.dc_asgd_rms_momentum = j["dc_asgd_rms_momentum"];
-  if (j.contains("dc_asgd_rms_epsilon"))
-    config.dc_asgd_rms_epsilon = j["dc_asgd_rms_epsilon"];
-  if (j.contains("batch_size"))
-    config.batch_size = j["batch_size"];
-  if (j.contains("interval_size"))
-    config.interval_size = j["interval_size"];
-  if (j.contains("num_threads"))
-    config.num_threads = j["num_threads"];
+  if (j.contains("eta")) config.eta = j["eta"];
+  if (j.contains("momentum")) config.momentum = j["momentum"];
+  if (j.contains("batch_size")) config.batch_size = j["batch_size"];
+  if (j.contains("lambda")) config.lambda = j["lambda"];
+  if (j.contains("dc_asgd_rms_momentum")) config.dc_asgd_rms_momentum = j["dc_asgd_rms_momentum"];
+  if (j.contains("dc_asgd_rms_epsilon")) config.dc_asgd_rms_epsilon = j["dc_asgd_rms_epsilon"];
 
-  // Parse probing parameters
-  if (j.contains("use_probing"))
-    config.use_probing = j["use_probing"];
-  if (j.contains("use_thread_probing"))
-    config.use_thread_probing = j["use_thread_probing"];
-  if (j.contains("probe_initial_interval"))
-    config.probe_initial_interval = j["probe_initial_interval"];
-  if (j.contains("probe_min_interval"))
-    config.probe_min_interval = j["probe_min_interval"];
-  if (j.contains("probe_test_steps"))
-    config.probe_test_steps = j["probe_test_steps"];
-  if (j.contains("probe_exec_steps"))
-    config.probe_exec_steps = j["probe_exec_steps"];
-  if (j.contains("thread_min_count"))
-    config.thread_min_count = j["thread_min_count"];
+  // 2. Synchronization Strategy
+  if (j.contains("interval_size")) {
+    config.interval_size = j["interval_size"];
+  } else if (j.contains("probe_initial_interval")) {
+    config.interval_size = j["probe_initial_interval"];
+  }
+
+  if (j.contains("min_interval")) {
+    config.min_interval = j["min_interval"];
+  } else if (j.contains("probe_min_interval")) {
+    config.min_interval = j["probe_min_interval"];
+  } else if (j.contains("decay_min_interval")) {
+    config.min_interval = j["decay_min_interval"];
+  }
+
+  // Parse probing and decay parameters
+  if (j.contains("interval_mode")) {
+    std::string mode = j["interval_mode"];
+    if (mode == "STATIC")
+      config.interval_mode = IntervalMode::STATIC;
+    else if (mode == "DECAY")
+      config.interval_mode = IntervalMode::DECAY;
+    else if (mode == "PROBING")
+      config.interval_mode = IntervalMode::PROBING;
+  } 
+
+  if (j.contains("thread_mode")) {
+    std::string mode = j["thread_mode"];
+    if (mode == "STATIC")
+      config.thread_mode = ThreadMode::STATIC;
+    else if (mode == "PROBING")
+      config.thread_mode = ThreadMode::PROBING;
+  } else {
+    // Backward compatibility for use_thread_probing
+    if (j.value("use_thread_probing", false)) {
+      config.thread_mode = ThreadMode::PROBING;
+    }
+  }
+
+  // 3. Adjustment Dynamics (Probing / Decay)
+  if (j.contains("decay_steps")) config.decay_steps = j["decay_steps"];
+  if (j.contains("decay_amount")) config.decay_amount = j["decay_amount"];
+  if (j.contains("probe_test_steps")) config.probe_test_steps = j["probe_test_steps"];
+  if (j.contains("probe_exec_steps")) config.probe_exec_steps = j["probe_exec_steps"];
+  if (j.contains("thread_min_count")) config.thread_min_count = j["thread_min_count"];
+
+  // 4. Resources & Termination
+  if (j.contains("num_threads")) config.num_threads = j["num_threads"];
+  if (j.contains("target_epochs")) config.target_epochs = j["target_epochs"];
+  if (j.contains("target_time_seconds")) config.target_time_seconds = j["target_time_seconds"];
 
   if (j.contains("exec_mode")) {
     std::string mode = j["exec_mode"];

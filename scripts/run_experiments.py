@@ -80,7 +80,7 @@ ELAPSED_PATTERN = re.compile(r"Elapsed:\s*([0-9:]+)")
 # ==============================================================================
 # EXPERIMENT DEFINITIONS
 # ==============================================================================
-# All experiments share: eta = 0.005, momentum = 0.5, use_probing = false
+# All experiments share: eta = 0.005, momentum = 0.5, interval_mode = STATIC
 # Per-experiment overrides: exec_mode, opt_mode, batch_size, num_threads,
 #                           interval_size, lambda
 # ==============================================================================
@@ -118,7 +118,7 @@ EXPERIMENTS = [
     {"name": "6_Self_Balancing", "exec_mode": "INTERVAL_ASYNC", "opt_mode": "DC_ASGD_A",
      "batch_size": 16, "num_threads": 64, # Initial thread limit
      "lambda": 2.0, "interval_size": 128, # Initial interval
-     "use_probing": True, "use_thread_probing": True,
+     "interval_mode": "PROBING", "thread_mode": "PROBING",
      "probe_test_steps": 1000, "probe_exec_steps": 10000},
 ]
 
@@ -308,8 +308,9 @@ def main():
             # Shared hyperparameters (uniform across all experiments)
             cfg["eta"] = 0.005
             cfg["momentum"] = 0.5
-            cfg["use_probing"] = exp.get("use_probing", False)
-            cfg["use_thread_probing"] = exp.get("use_thread_probing", False)
+            cfg["interval_mode"] = exp.get("interval_mode", "STATIC")
+            cfg["thread_mode"] = exp.get("thread_mode", "STATIC")
+            cfg["min_interval"] = exp.get("min_interval", 4)
 
             # Per-experiment overrides
             cfg["exec_mode"] = exp["exec_mode"]
