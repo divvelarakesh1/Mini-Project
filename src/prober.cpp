@@ -107,11 +107,62 @@ void Prober::evaluate_current_window() {
 
   Phase current = phase_.load(std::memory_order_relaxed);
 
+  // ---------------------------------------------------------------------------
+  // THREAD EVALUATION
+  // ---------------------------------------------------------------------------
   if (current == Phase::PROBING_THREADS) {
-    std::cout << "[Prober] Test Threads: " << std::setw(2) << current_test_threads_
+    std::cout << "[Prober] Test Threads: " << std::setw(3) << current_test_threads_
               << " | " << std::fixed << std::setprecision(0) << std::setw(6) << throughput_ips << " ips"
               << " | rate: " << std::showpos << std::fixed << std::setprecision(4) << rate << std::noshowpos << "\n";
 
+    // PHASE 1: Global Binary Search
+    if (!initial_thread_search_done_) {
+      if (thread_probe_slot_ == 0) {
+        thread_anchor_rate_ = rate;
+        thread_anchor_ = current_test_threads_;
+        
+        int step = std::max(1, (thread_bs_high_ - thread_bs_low_) / 4);
+        thread_candidate_ = (thread_anchor_ + step <= thread_bs_high_) ? thread_anchor_ + step : thread_anchor_ - step;
+        
+        thread_probe_slot_ = 1;
+        current_test_threads_ = thread_candidate_;
+        dispatcher_.set_active_threads(current_test_threads_);
+        window_start_time_ = std::chrono::steady_clock::now();
+      } else {
+        // We have measured both anchor and candidate, figure out which side the peak is on
+        if (thread_candidate_ > thread_anchor_) {
+          if (rate > thread_anchor_rate_ * kSignificanceThreshold) {
+            thread_bs_low_ = thread_anchor_; 
+            best_val_ = thread_candidate_;
+          } else {
+            thread_bs_high_ = thread_candidate_; 
+            best_val_ = thread_anchor_;
+          }
+        } else {
+          if (rate > thread_anchor_rate_ * kSignificanceThreshold) {
+            thread_bs_high_ = thread_anchor_; 
+            best_val_ = thread_candidate_;
+          } else {
+            thread_bs_low_ = thread_candidate_; 
+            best_val_ = thread_anchor_;
+          }
+        }
+
+        if (thread_bs_low_ >= thread_bs_high_ || (thread_bs_high_ - thread_bs_low_) <= 2) {
+          initial_thread_search_done_ = true;
+          std::cout << "[Prober] Thread Global Binary Search Complete -> Locked at " << best_val_ << "\n";
+        } else {
+          std::cout << "[Prober] Thread Binary Search narrowed to [" << thread_bs_low_ << ", " << thread_bs_high_ << "]\n";
+        }
+        
+        current_test_threads_ = best_val_;
+        dispatcher_.set_active_threads(current_test_threads_);
+        advance_phase();
+      }
+      return;
+    }
+
+    // PHASE 2: Neighborhood Search
     if (best_val_ == -1 || rate > best_rate_) {
       best_rate_ = rate;
       best_val_ = current_test_threads_;
@@ -123,17 +174,68 @@ void Prober::evaluate_current_window() {
       dispatcher_.set_active_threads(current_test_threads_);
       window_start_time_ = std::chrono::steady_clock::now();
     } else {
-      std::cout << "[Prober] Thread Micro-Track Locked -> " << best_val_ << "\n";
+      std::cout << "[Prober] Thread Neighborhood Search Winner -> " << best_val_ << "\n";
       current_test_threads_ = best_val_;
       dispatcher_.set_active_threads(best_val_);
       advance_phase();
     }
   } 
+  
+  // ---------------------------------------------------------------------------
+  // INTERVAL EVALUATION
+  // ---------------------------------------------------------------------------
   else if (current == Phase::PROBING_INTERVAL) {
     std::cout << "[Prober] Test Interval: " << std::setw(4) << current_test_interval_
               << " | " << std::fixed << std::setprecision(0) << std::setw(6) << throughput_ips << " ips"
               << " | rate: " << std::showpos << std::fixed << std::setprecision(4) << rate << std::noshowpos << "\n";
 
+    // PHASE 1: Global Binary Search
+    if (!initial_interval_search_done_) {
+      if (interval_probe_slot_ == 0) {
+        interval_anchor_rate_ = rate;
+        interval_anchor_ = current_test_interval_;
+        
+        int step = std::max(1, (interval_bs_high_ - interval_bs_low_) / 4);
+        interval_candidate_ = (interval_anchor_ + step <= interval_bs_high_) ? interval_anchor_ + step : interval_anchor_ - step;
+        
+        interval_probe_slot_ = 1;
+        current_test_interval_ = interval_candidate_;
+        dispatcher_.set_interval_size(current_test_interval_);
+        window_start_time_ = std::chrono::steady_clock::now();
+      } else {
+        if (interval_candidate_ > interval_anchor_) {
+          if (rate > interval_anchor_rate_ * kSignificanceThreshold) {
+            interval_bs_low_ = interval_anchor_;
+            best_val_ = interval_candidate_;
+          } else {
+            interval_bs_high_ = interval_candidate_;
+            best_val_ = interval_anchor_;
+          }
+        } else {
+          if (rate > interval_anchor_rate_ * kSignificanceThreshold) {
+            interval_bs_high_ = interval_anchor_;
+            best_val_ = interval_candidate_;
+          } else {
+            interval_bs_low_ = interval_candidate_;
+            best_val_ = interval_anchor_;
+          }
+        }
+
+        if (interval_bs_low_ >= interval_bs_high_ || (interval_bs_high_ - interval_bs_low_) <= 2) {
+          initial_interval_search_done_ = true;
+          std::cout << "[Prober] Interval Global Binary Search Complete -> Locked at " << best_val_ << "\n";
+        } else {
+          std::cout << "[Prober] Interval Binary Search narrowed to [" << interval_bs_low_ << ", " << interval_bs_high_ << "]\n";
+        }
+        
+        current_test_interval_ = best_val_;
+        dispatcher_.set_interval_size(current_test_interval_);
+        advance_phase();
+      }
+      return;
+    }
+
+    // PHASE 2: Neighborhood Search
     if (best_val_ == -1 || rate > best_rate_) {
       best_rate_ = rate;
       best_val_ = current_test_interval_;
@@ -145,7 +247,7 @@ void Prober::evaluate_current_window() {
       dispatcher_.set_interval_size(current_test_interval_);
       window_start_time_ = std::chrono::steady_clock::now();
     } else {
-      std::cout << "[Prober] Interval Micro-Track Locked -> " << best_val_ << "\n";
+      std::cout << "[Prober] Interval Neighborhood Search Winner -> " << best_val_ << "\n";
       current_test_interval_ = best_val_;
       dispatcher_.set_interval_size(best_val_);
       advance_phase();
@@ -185,12 +287,27 @@ void Prober::start_probing_threads() {
   best_rate_         = -1e9;
   best_val_          = -1;
 
-  // Tiny, safe 10% micro-step (minimum of 1)
+  if (!initial_thread_search_done_) {
+    std::cout << "[Prober] Starting Global Binary Search for Threads\n";
+    if (thread_bs_low_ == -1) {
+      thread_bs_low_ = config_.thread_min_count;
+      thread_bs_high_ = config_.num_threads;
+    }
+    thread_probe_slot_ = 0;
+    current_test_threads_ = thread_bs_low_ + (thread_bs_high_ - thread_bs_low_) / 2;
+    dispatcher_.set_active_threads(current_test_threads_);
+    return;
+  }
+
+  // Set up 3-point Neighborhood Micro-step
   int base = current_test_threads_;
   int delta = std::max(1, base / 10); 
 
   int left_bound = std::max(config_.thread_min_count, base - delta);
   int right_bound = std::min(config_.num_threads, base + delta);
+
+  std::cout << "[Prober] Starting Neighborhood Search around " << base 
+            << " (Testing: " << left_bound << ", " << base << ", " << right_bound << ")\n";
 
   if (left_bound != base) search_queue_.push(left_bound);
   search_queue_.push(base);
@@ -211,15 +328,34 @@ void Prober::start_probing_interval() {
   best_rate_         = -1e9;
   best_val_          = -1;
 
-  // Tiny, safe 15% micro-step 
-  int base = current_test_interval_;
-  int delta = std::max(2, base / 6); 
-
   int dynamic_min = std::max(1, current_test_threads_ / 2);
   int dynamic_max = std::max(dynamic_min, std::min(config_.interval_size, current_test_threads_ * 3));
 
+  if (!initial_interval_search_done_) {
+    std::cout << "[Prober] Starting Global Binary Search for Interval\n";
+    if (interval_bs_low_ == -1) {
+      interval_bs_low_ = dynamic_min;
+      interval_bs_high_ = dynamic_max;
+    } else {
+      interval_bs_low_ = std::max(interval_bs_low_, dynamic_min);
+      interval_bs_high_ = std::min(interval_bs_high_, dynamic_max);
+    }
+    
+    interval_probe_slot_ = 0;
+    current_test_interval_ = interval_bs_low_ + (interval_bs_high_ - interval_bs_low_) / 2;
+    dispatcher_.set_interval_size(current_test_interval_);
+    return;
+  }
+
+  // Set up 3-point Neighborhood Micro-step
+  int base = current_test_interval_;
+  int delta = std::max(2, base / 6); 
+
   int left_bound = std::max(dynamic_min, base - delta);
   int right_bound = std::min(dynamic_max, base + delta);
+
+  std::cout << "[Prober] Starting Neighborhood Search around " << base 
+            << " (Testing: " << left_bound << ", " << base << ", " << right_bound << ")\n";
 
   if (left_bound != base) search_queue_.push(left_bound);
   search_queue_.push(base);

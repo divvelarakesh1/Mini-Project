@@ -11,9 +11,10 @@ class Dispatcher;
  * @class Prober
  * @brief Orchestrates performance tuning via Execution and Probing phases.
  *
- * Uses Continuous Micro-Tracking: tests exactly 3 tight, safe neighborhood 
- * values around the current state and immediately locks the best one. 
- * Completely stateless, preventing extreme jumps that damage model convergence.
+ * Uses a Dual-Stage Architecture:
+ * 1. Initial Global Binary Search: Rapidly brackets the global optimum from min to max.
+ * 2. Neighborhood Search (Micro-Tracking): Continuously tests 3 tight, safe neighborhood 
+ * values around the current state to safely track the optimum over time.
  */
 class Prober {
 public:
@@ -44,6 +45,7 @@ private:
   static constexpr double kEpsilon               = 1e-9;
   static constexpr double kLossMultiplier        = 1e6;
   static constexpr double kRateMultiplier        = 10000.0;
+  static constexpr double kSignificanceThreshold = 1.02; // Candidate must beat anchor by 2% to win
 
   const Config       &config_;
   Dispatcher         &dispatcher_;
@@ -65,7 +67,24 @@ private:
   int current_test_threads_;
   int current_test_interval_;
 
-  // --- Micro-Tracking Queue ---
+  // --- Initial Global Binary Search State ---
+  bool   initial_thread_search_done_{false};
+  int    thread_bs_low_{-1};
+  int    thread_bs_high_{-1};
+  int    thread_anchor_{-1};
+  double thread_anchor_rate_{-1e9};
+  int    thread_probe_slot_{0};
+  int    thread_candidate_{-1};
+
+  bool   initial_interval_search_done_{false};
+  int    interval_bs_low_{-1};
+  int    interval_bs_high_{-1};
+  int    interval_anchor_{-1};
+  double interval_anchor_rate_{-1e9};
+  int    interval_probe_slot_{0};
+  int    interval_candidate_{-1};
+
+  // --- Neighborhood Search (Micro-Tracking) State ---
   std::queue<int> search_queue_;
   double best_rate_{-1e9};
   int    best_val_{-1};
