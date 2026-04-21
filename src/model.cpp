@@ -1,4 +1,5 @@
 #include "model.hpp"
+#include "data.hpp"
 #include <random>
 
 MiniDNNModel::MiniDNNModel(const Config &config) {
@@ -46,6 +47,31 @@ std::pair<ParameterList, double> MiniDNNModel::compute_gradients(const Eigen::Ma
   double loss = net_.get_output()->loss();
 
   return {net_.get_derivatives(), loss};
+}
+
+double MiniDNNModel::evaluate(const DataLoader &loader) {
+  const Eigen::MatrixXd &X = loader.get_images();
+  const std::vector<uint8_t> &Y = loader.get_labels();
+
+  if (X.cols() == 0 || Y.empty()) {
+    return 0.0;
+  }
+
+  // Predict outputs for the entire dataset
+  Eigen::MatrixXd pred_scores = net_.predict(X);
+
+  int correct = 0;
+  int n = static_cast<int>(Y.size());
+
+  for (int i = 0; i < n; ++i) {
+    int pred_idx;
+    pred_scores.col(i).maxCoeff(&pred_idx);
+    if (pred_idx == static_cast<int>(Y[i])) {
+      correct++;
+    }
+  }
+
+  return static_cast<double>(correct) / n;
 }
 
 MiniDNN::Network *MiniDNNModel::get_network() { 

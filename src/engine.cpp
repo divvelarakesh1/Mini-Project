@@ -7,8 +7,8 @@
 #include <omp.h>
 #endif
 
-TrainingEngine::TrainingEngine(const Config &config, DataLoader &loader)
-    : config_(config), loader_(loader), monitor_(config, loader.num_samples()),
+TrainingEngine::TrainingEngine(const Config &config, DataLoader &loader, DataLoader &test_loader)
+    : config_(config), loader_(loader), test_loader_(test_loader), monitor_(config, loader.num_samples()),
       dispatcher_(config), global_model_(config) {
   
   if (config_.interval_mode != IntervalMode::STATIC || config_.thread_mode != ThreadMode::STATIC) {
@@ -23,7 +23,9 @@ TrainingEngine::TrainingEngine(const Config &config, DataLoader &loader)
 #endif
 }
 
-TrainingEngine::~TrainingEngine() = default;
+TrainingEngine::~TrainingEngine() {
+    dispatcher_.stop_all();
+}
 
 void TrainingEngine::run() {
   std::cout << "\n=====================================\n";
@@ -64,6 +66,14 @@ void TrainingEngine::run() {
 
   std::cout << "\n=====================================\n";
   std::cout << "[Engine] Training Terminated Safely!\n";
+
+  // Final Model Evaluation
+  std::cout << "[Engine] Evaluating Final Model on Test Set...\n";
+  double accuracy = global_model_.evaluate(test_loader_);
+
+  std::cout << "-------------------------------------\n";
+  std::cout << "\033[1m\033[32m[Final Results]\033[0m\n";
+  std::cout << "Final Test Accuracy: \033[1m\033[36m" << (accuracy * 100.0) << "%\033[0m\n";
   std::cout << "=====================================\n";
 }
 

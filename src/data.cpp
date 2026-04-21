@@ -86,6 +86,29 @@ void DataLoader::load_cifar10(const std::string& dir)
               << ", classes=" << num_classes_ << "\n";
 }
 
+void DataLoader::load_cifar10_test(const std::string& dir)
+{
+    std::lock_guard<std::mutex> lock(mtx_);
+
+    num_features_ = kCifarImageBytes;
+    num_classes_  = kCifar10ClassesCount;
+
+    // Pre-allocate space for the test set (10,000 samples)
+    images_.resize(kCifarImageBytes, kCifar10Samples);
+    labels_.reserve(kCifar10Samples);
+
+    std::string path = dir + "/test_batch.bin";
+    load_cifar10_file(path);
+
+    int n = static_cast<int>(labels_.size());
+    images_.conservativeResize(kCifarImageBytes, n);
+    cursor_.store(0, std::memory_order_relaxed);
+    
+    std::cout << "[DataLoader] CIFAR-10 test loaded: "
+              << n << " samples, features=" << num_features_
+              << ", classes=" << num_classes_ << "\n";
+}
+
 // ============================================================================
 // Thread-Safe Mini-Batch Logic
 // ============================================================================
@@ -160,9 +183,8 @@ void DataLoader::load_cifar10_file(const std::string& path)
         
     // Assert boundary specifications match tightly
     auto size = f.tellg();
-    if (size != static_cast<std::streampos>(kCifar10Samples * kCifarRecordBytes)) {
-        throw std::runtime_error("[DataLoader] Invalid CIFAR-10 file sizes at: " + path);
-    }
+    // Use the actual file size to determine sample count if not batch_size aligned
+    int num_samples_in_file = static_cast<int>(size / kCifarRecordBytes);
     
     f.seekg(0, std::ios::beg);
 
@@ -175,7 +197,7 @@ void DataLoader::load_cifar10_file(const std::string& path)
     int col = static_cast<int>(labels_.size());
     size_t offset = 0;
 
-    for (int i = 0; i < kCifar10Samples; ++i) {
+    for (int i = 0; i < num_samples_in_file; ++i) {
         labels_.push_back(buffer[offset]);
 
         // CIFAR encodes red mapping initially, then green blocks followed by blue arrays. 
@@ -199,10 +221,21 @@ void DataLoader::load_cifar10_file(const std::string& path)
 
 void DataLoader::load_mnist(const std::string& dir)
 {
-    std::lock_guard<std::mutex> lock(mtx_);
-
     std::string images_path = dir + "/train-images-idx3-ubyte";
     std::string labels_path = dir + "/train-labels-idx1-ubyte";
+    load_mnist_internal(images_path, labels_path, "train");
+}
+
+void DataLoader::load_mnist_test(const std::string& dir)
+{
+    std::string images_path = dir + "/t10k-images-idx3-ubyte";
+    std::string labels_path = dir + "/t10k-labels-idx1-ubyte";
+    load_mnist_internal(images_path, labels_path, "test");
+}
+
+void DataLoader::load_mnist_internal(const std::string& images_path, const std::string& labels_path, const std::string& type)
+{
+    std::lock_guard<std::mutex> lock(mtx_);
 
     std::ifstream fImages(images_path, std::ios::binary);
     std::ifstream fLabels(labels_path, std::ios::binary);
@@ -243,6 +276,7 @@ void DataLoader::load_mnist(const std::string& dir)
     num_classes_  = kMnistClassesCount;
 
     images_.resize(num_features_, num_images);
+    labels_.clear();
     labels_.reserve(num_labels);
 
     // ========================================================================
@@ -276,7 +310,7 @@ void DataLoader::load_mnist(const std::string& dir)
 
     cursor_.store(0, std::memory_order_relaxed);
     
-    std::cout << "[DataLoader] MNIST testnet loaded: "
+    std::cout << "[DataLoader] MNIST " << type << " loaded: "
               << num_images << " samples, features=" << num_features_
               << ", classes=" << num_classes_ << "\n";
 }

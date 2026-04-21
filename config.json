@@ -5,23 +5,20 @@
   "lambda": 2.0,
   "dc_asgd_rms_momentum": 0.95,
   "dc_asgd_rms_epsilon": 1e-07,
-
   "interval_mode": "PROBING",
   "thread_mode": "PROBING",
-  "interval_size": 64,
-  "min_interval": 32,
-
-  "decay_steps": 1000,
-  "decay_amount": 4,
-  "probe_test_steps": 1024,
-  "probe_exec_steps": 8192,
+  "interval_size": 128,
+  "min_interval": 8,
+  "decay_steps": 4096,
+  "decay_amount": 1,
+  "probe_test_steps": 256,
+  "probe_exec_steps": 1024,
   "thread_min_count": 1,
-
   "exec_mode": "INTERVAL_ASYNC",
   "opt_mode": "DC_ASGD_A",
   "dataset": "CIFAR",
-  "num_threads": 32,
+  "num_threads": 64,
   "stop_mode": "TIME",
-  "target_epochs": 10.0,
+  "target_epochs": 0.001,
   "target_time_seconds": 300.0
 }

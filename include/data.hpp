@@ -37,10 +37,22 @@ public:
     void load_cifar10(const std::string& dir);
 
     /**
-     * @brief Load the MNIST dataset.
+     * @brief Load the CIFAR-10 test set.
+     * @param dir Directory containing test_batch.bin
+     */
+    void load_cifar10_test(const std::string& dir);
+
+    /**
+     * @brief Load the MNIST training dataset.
      * @param dir Directory containing train-images-idx3-ubyte and train-labels-idx1-ubyte
      */
     void load_mnist(const std::string& dir);
+
+    /**
+     * @brief Load the MNIST test dataset.
+     * @param dir Directory containing t10k-images-idx3-ubyte and t10k-labels-idx1-ubyte
+     */
+    void load_mnist_test(const std::string& dir);
 
     // -----------------------------------------------------------------------
     // Batch Retrieval
@@ -68,6 +80,9 @@ public:
     int  num_classes()  const { return num_classes_;  }
     bool is_loaded()    const { return !labels_.empty(); }
 
+    const Eigen::MatrixXd&      get_images() const { return images_; }
+    const std::vector<uint8_t>& get_labels() const { return labels_; }
+
     /**
      * @brief Reset the data iterator to the beginning of the dataset.
      */
@@ -82,6 +97,9 @@ public:
 private:
     // Internal helper to read a single CIFAR-10 data slice from disk.
     void load_cifar10_file(const std::string& path);
+
+    // Internal helper for MNIST parsing to avoid duplication
+    void load_mnist_internal(const std::string& images_path, const std::string& labels_path, const std::string& type);
 
     // -----------------------------------------------------------------------
     // Storage Details (Column-Major Matrix Format)

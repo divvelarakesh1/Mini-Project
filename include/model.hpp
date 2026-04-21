@@ -5,6 +5,8 @@
 #include <MiniDNN.h>
 #include <vector>
 
+class DataLoader;
+
 /**
  * @typedef ParameterList
  * @brief Represents the weight and bias parameters of a neural network.
@@ -36,6 +38,13 @@ public:
   const ParameterList &get_cached_weights() const;
 
   std::pair<ParameterList, double> compute_gradients(const Eigen::MatrixXd &batch_X, const Eigen::MatrixXd &batch_Y);
+
+  /**
+   * @brief Evaluates the model on a given dataset and returns the accuracy.
+   * @param loader The DataLoader containing the evaluation dataset.
+   * @return A double-precision value representing the accuracy ratio (0.0 to 1.0).
+   */
+  double evaluate(const DataLoader &loader);
 
   MiniDNN::Network *get_network();
 

@@ -22,13 +22,16 @@ int main() {
     std::cout << "=====================================\n";
     
     DataLoader loader;
+    DataLoader test_loader;
     try {
         if (config.dataset == DatasetType::MNIST) {
             std::cout << "[Main] Target dataset is MNIST. Loading stream formats...\n";
             loader.load_mnist("../data/mnist");
+            test_loader.load_mnist_test("../data/mnist");
         } else {
             std::cout << "[Main] Target dataset is CIFAR-10. Loading stream formats...\n";
             loader.load_cifar10("../data/cifar-10");
+            test_loader.load_cifar10_test("../data/cifar-10");
         }
     } catch (const std::exception& e) {
         std::cerr << "\n[CRITICAL ERROR] Failed to load datasets: " << e.what() << "\n";
@@ -36,7 +39,7 @@ int main() {
         return 1;
     }
     
-    TrainingEngine engine(config, loader);
+    TrainingEngine engine(config, loader, test_loader);
     engine.run();
 
     return 0;
